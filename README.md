@@ -1,71 +1,59 @@
-# Arch Street Burial Site — React Dashboard
+# 🏺 Arch Street Burial Site Dashboard
 
-A 3D interactive archaeological visualization dashboard for the Arch Street burial site in Philadelphia (18th–19th century, 324 burials).
+Interactive 3D archaeological visualization dashboard
+for the Arch Street burial site, Philadelphia PA
+(18th–19th century, 324 burials excavated).
+
+## Live Site
+https://arch-street-burials.netlify.app
 
 ## Features
-
-- **3D Scatter Plot** — Three.js-powered coffin markers in 3D space, positioned by real N/E/Depth coordinates
-- **Color Coding** — Switch between Sex / Age / Ancestry / Preservation coloring
-- **Filters** — Filter by sex, age group, preservation state, or named persons only
-- **Click-to-Inspect** — Click any 3D marker to open a full burial record detail panel
-- **G-Number Search** — Search by burial ID number
-- **Analytics Tab** — Recharts bar + pie charts for demographics, preservation, ancestry, and depth distribution
+- 3D scatter plot (Three.js) — burials positioned by real coordinates
+- Color by Sex / Age / Ancestry / Preservation / DBSCAN Clusters
+- Bayesian + DBSCAN identity confidence matching
+- Google Sheets live sync — edit master sheet, dashboard updates
+- Role-based auth via Netlify Identity
+- Edit burial records in-browser (admin only)
+- Analytics dashboard with demographic charts
+- Dark / Light theme
 
 ## Tech Stack
-
 - React 18
-- Three.js (raw, via `three` package + `OrbitControls`)
-- Recharts for analytics charts
-- No Tailwind — custom dark archaeological CSS theme
+- Three.js (raw)
+- Recharts
+- Netlify Identity
+- Google Sheets CSV sync
 
-## Getting Started
+## Local Development
 
+### Prerequisites
+- Node.js 18+
+- npm
+
+### Setup
 ```bash
+git clone https://github.com/Alwinphilip0105/Arch_St_Project_live.git
+cd Arch_St_Project_live
 npm install
+cp .env.example .env
+# Fill in .env values
 npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+## Deployment
+Deployed on Netlify. Auto-deploys on push to main.
 
-## Build for Production
-
-```bash
-npm run build
-```
-
-Builds to `build/` directory — static files ready to deploy to GitHub Pages, Netlify, Vercel, etc.
-
-## Deploy to GitHub Pages
-
-1. Add to `package.json`: `"homepage": "https://YOUR_USERNAME.github.io/Arch_St_project"`
-2. Install: `npm install --save-dev gh-pages`
-3. Add scripts:
-   ```json
-   "predeploy": "npm run build",
-   "deploy": "gh-pages -d build"
-   ```
-4. Run: `npm run deploy`
-
-## Project Structure
-
-```
-src/
-  App.jsx         — Main dashboard component (3D view + charts)
-  App.css         — Dark archaeological theme
-  burialData.js   — 324 burial records (extracted from Three.js HTML)
-  index.js        — React entry point
-public/
-  index.html      — HTML shell
-```
+## Team
+RUC AI Campus Team 2
+- Alwin Philip (Lead Developer)
+- Amelia Stieglitz
+- Aryan Bhat
+- Carla Villacis
+- Kimberlee Moran (Associate Teaching Professor)
+- Lindsay Peck
+- Ojobo
 
 ## Data
-
-324 burial records from the Arch Street archaeological excavation. Each record includes:
-- Spatial coordinates (North, East, Depth in feet)
-- Biological profile (Age, Sex, Ancestry)
-- Preservation state & soft tissue presence
-- Coffin details (shape, lid type, handles, dimensions)
-- Material culture & artifacts
-- Historical identification (named individuals, date of death)
-
-Source: RUC AI Campus Team 2 analysis notebook (Google Drive dataset)
+324 burial records from the Arch Street
+archaeological excavation. Source: RUC AI Campus
+Team 2 analysis notebook.
