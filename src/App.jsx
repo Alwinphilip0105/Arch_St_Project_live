@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, Legend, ScatterChart, Scatter, CartesianGrid
+  ResponsiveContainer, CartesianGrid
 } from 'recharts';
 import { burialData as localBurialData } from './burialData';
 import { fetchSheetData, clearSheetCache } from './services/sheetsService';
@@ -166,7 +166,7 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
     if (obj.material?.map) obj.material.map.dispose?.();
   }
 
-  function buildSceneDecorations(scene, currentTheme) {
+  const buildSceneDecorations = useCallback((scene, currentTheme) => {
     const decorations = [];
     const LC = currentTheme === 'dark' ? '#c8b890' : '#2c2c2c';
 
@@ -257,7 +257,7 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
     decorations.push(gridHelper);
 
     return { terrain, gridHelper, decorations };
-  }
+  }, [showSurface]);
 
   useEffect(() => {
     const el = mountRef.current;
@@ -491,7 +491,9 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
       if (el.contains(tooltip)) el.removeChild(tooltip);
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
     };
-  }, []); // only mount once
+    // Three.js scene initializes once on mount; markers/theme use dedicated effects.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Update scene background when theme changes.
   useEffect(() => {
@@ -507,7 +509,7 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
     sceneRef.current.terrain = nextDecor.terrain;
     sceneRef.current.gridHelper = nextDecor.gridHelper;
     sceneRef.current.decorations = nextDecor.decorations;
-  }, [theme]);
+  }, [buildSceneDecorations, theme, showSurface]);
 
   useEffect(() => {
     const { terrain } = sceneRef.current;
