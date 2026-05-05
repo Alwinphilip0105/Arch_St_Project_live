@@ -231,11 +231,16 @@ function runMatcher(burial, candidates, topN = 10, familyPrior = null) {
   return top
     .map(({ candidate, score, matchedFeatures, unmatchedFeatures }) => {
       const normalized = Math.round(((score - minScore) / range) * 100);
+      const familyPriorUsed = matchedFeatures.some((f) =>
+        f.toLowerCase().includes("family cluster prior")
+      );
+      const dbscanBoost = familyPriorUsed ? 10 : 0;
+      const confidenceScore = Math.min(100, normalized + dbscanBoost);
 
       let confidence;
-      if (normalized >= 80) confidence = "High";
-      else if (normalized >= 55) confidence = "Moderate";
-      else if (normalized >= 30) confidence = "Low";
+      if (confidenceScore >= 80) confidence = "High";
+      else if (confidenceScore >= 55) confidence = "Moderate";
+      else if (confidenceScore >= 30) confidence = "Low";
       else return null;
 
       const topMatches = matchedFeatures
@@ -253,12 +258,14 @@ function runMatcher(burial, candidates, topN = 10, familyPrior = null) {
         person: candidate,
         rawScore: score,
         score: normalized,
+        confidenceScore,
         confidence,
         explanation,
         matchedFeatures,
         unmatchedFeatures,
         comparableFields: matchedFeatures.length + unmatchedFeatures.length,
-        method: "bayesian",
+        familyPriorUsed,
+        method: "bayesian+dbscan",
       };
     })
     .filter(Boolean);

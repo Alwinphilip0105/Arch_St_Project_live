@@ -1276,6 +1276,7 @@ export default function App() {
       setHighlightCluster(null);
       setSelected(found);
       setSearchStatus('found');
+      setActiveTab('scatter');
       setRightTab('matches');
       setSearchTopN(5);
 

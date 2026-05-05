@@ -17,7 +17,7 @@ function toInitials(name) {
     .join(".");
 }
 
-function MatchCard({ burial, match, isOpen, onToggle }) {
+function MatchCard({ burial, match }) {
   const color = CONFIDENCE_COLORS[match.confidence] || "var(--text-dim)";
   const badgeClass = (match.confidence || "").toLowerCase();
   const hasDateOfDeath = Boolean((match.person.dateOfDeath || "").trim());
@@ -90,49 +90,6 @@ function MatchCard({ burial, match, isOpen, onToggle }) {
         </div>
       )}
 
-      <p className="confidence-explanation">{match.explanation}</p>
-
-      <button className="confidence-toggle" onClick={onToggle} type="button">
-        {isOpen ? "Hide scoring details" : "Show scoring details"}
-      </button>
-
-      {isOpen && (
-        <div className="confidence-table-wrap bayesian-detail">
-          {(match.matchedFeatures?.length ?? 0) > 0 && (
-            <div className="bayesian-section">
-              <div className="bayesian-section-title">Contributions</div>
-              {match.matchedFeatures.map((line, i) => (
-                <div className="bayesian-line matched" key={`mf-${i}`}>
-                  {line}
-                </div>
-              ))}
-            </div>
-          )}
-          {(match.unmatchedFeatures?.length ?? 0) > 0 && (
-            <div className="bayesian-section">
-              <div className="bayesian-section-title">Penalties / mismatches</div>
-              {match.unmatchedFeatures.map((line, i) => (
-                <div className="bayesian-line unmatched" key={`uf-${i}`}>
-                  {line}
-                </div>
-              ))}
-            </div>
-          )}
-          {(match.matchedFeatures?.length ?? 0) === 0 &&
-            (match.unmatchedFeatures?.length ?? 0) === 0 && (
-              <div className="bayesian-section">
-                <div className="bayesian-line muted">No comparable features for this pair.</div>
-              </div>
-            )}
-          <div className="field-row total-row bayesian-total">
-            <span className="field-name">Totals</span>
-            <span className="field-values totals-text">
-              Normalized <strong>{match.score}</strong>/100 · Bayesian raw{" "}
-              <strong>{match.rawScore.toFixed(2)}</strong>
-            </span>
-          </div>
-        </div>
-      )}
     </article>
   );
 }
@@ -355,11 +312,15 @@ export default function ConfidencePanel({
   topN = null,
   showComparisonTable = false,
 }) {
-  const [openCards, setOpenCards] = useState({});
   const [confidenceFilter, setConfidenceFilter] = useState("All");
   const [sortMode, setSortMode] = useState("score");
   const [viewMode, setViewMode] = useState("cards");
   const [comparePopupOpen, setComparePopupOpen] = useState(false);
+
+  const closeComparePopup = () => {
+    setComparePopupOpen(false);
+    setViewMode("cards");
+  };
 
   const matches = useMemo(() => {
     if (!burial) return [];
@@ -445,10 +406,6 @@ export default function ConfidencePanel({
     });
     return items;
   }, [displayedMatches]);
-
-  const toggleCard = (key) => {
-    setOpenCards((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
 
   if (!burial) {
     return (
@@ -546,8 +503,6 @@ export default function ConfidencePanel({
                 burial={burial}
                 key={item.key}
                 match={item.match}
-                isOpen={Boolean(openCards[item.key])}
-                onToggle={() => toggleCard(item.key)}
               />
             )
           )
@@ -557,7 +512,7 @@ export default function ConfidencePanel({
       {comparePopupOpen && compareMatches.length > 0 && (
         <div
           className="compare-popup-overlay"
-          onClick={() => setComparePopupOpen(false)}
+          onClick={closeComparePopup}
           role="presentation"
         >
           <div
@@ -572,7 +527,7 @@ export default function ConfidencePanel({
               <button
                 type="button"
                 className="compare-popup-close"
-                onClick={() => setComparePopupOpen(false)}
+                onClick={closeComparePopup}
               >
                 ✕
               </button>
