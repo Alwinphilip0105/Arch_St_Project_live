@@ -45,7 +45,7 @@ Deployed on Netlify. Auto-deploys on push to main.
 
 ## Team
 RUC AI Campus Team 2
-- Alwin Philip (Lead Developer)
+- Alwin Philip 
 - Amelia Stieglitz
 - Aryan Bhat
 - Carla Villacis
