@@ -12,15 +12,12 @@ import {
   ResponsiveContainer, CartesianGrid
 } from 'recharts';
 import { burialData as localBurialData } from './burialData';
-import { fetchSheetData, clearSheetCache } from './services/sheetsService';
+import { fetchSheetData } from './services/sheetsService';
 import {
   initAuth,
   openLogin,
-  logout,
   getCurrentUser,
   isAdmin,
-  getUserRole,
-  getDisplayName,
 } from './services/authService';
 import { deriveAgeCat } from './utils/deriveAgeCat';
 import { clusterBurials, getLastClusterEpsilon } from './utils/dbscan';
@@ -105,15 +102,6 @@ const EMPTY_FILTERS = {
   ancestry: new Set(),
   artifactType: new Set(),
   materialType: new Set(),
-};
-
-const SYNC_CONFIG = {
-  idle:    { dot: '',  label: '',              color: 'transparent'      },
-  loading: { dot: '⟳', label: 'Syncing…',       color: 'var(--text-dim)'  },
-  synced:  { dot: '●', label: 'Live',          color: '#4aaf50'          },
-  cached:  { dot: '●', label: 'Cached',       color: 'var(--amber)'     },
-  offline: { dot: '●', label: 'Local data',   color: 'var(--text-dim)'  },
-  error:   { dot: '●', label: 'Sync failed',  color: '#e05c1e'          },
 };
 
 // ─── Stats computations ───────────────────────────────────────────────────────
@@ -995,9 +983,6 @@ export default function App() {
   const searchStatusTimeoutRef = useRef(null);
   const searchSuccessTimeoutRef = useRef(null);
   const [liveData, setLiveData] = useState(null);
-  const [syncStatus, setSyncStatus] = useState('idle');
-  // 'idle' | 'loading' | 'synced' | 'cached' | 'offline' | 'error'
-  const [lastSynced, setLastSynced] = useState(null);
 
   const [overrides, setOverrides] = useState({});
   const [currentUser, setCurrentUser] = useState(() => getCurrentUser());
@@ -1010,23 +995,17 @@ export default function App() {
   const isEditor = currentUser !== null;
   const userIsAdmin = isAdmin(currentUser);
 
-  const syncSheet = useCallback(async (forceRefresh = false) => {
-    setSyncStatus('loading');
-    if (forceRefresh) clearSheetCache();
-
+  const syncSheet = useCallback(async () => {
     try {
       const result = await fetchSheetData();
 
       if (result?.data?.length > 0) {
         setLiveData(result.data);
-        setLastSynced(new Date());
-        setSyncStatus(result.fromCache ? 'cached' : 'synced');
       } else {
         setLiveData(null);
-        setSyncStatus('offline');
       }
     } catch {
-      setSyncStatus('error');
+      setLiveData(null);
     }
   }, []);
 
