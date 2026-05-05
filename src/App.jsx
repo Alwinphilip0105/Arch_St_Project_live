@@ -1,4 +1,10 @@
-import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import React, {
+  useRef,
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+} from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import {
@@ -17,11 +23,11 @@ import {
   getDisplayName,
 } from './services/authService';
 import { deriveAgeCat } from './utils/deriveAgeCat';
-import { clusterBurials } from './utils/dbscan';
+import { clusterBurials, getLastClusterEpsilon } from './utils/dbscan';
 import ConfidencePanel from './components/ConfidencePanel';
+import ClusterAnalysis from './components/ClusterAnalysis';
 import { scoreMatch, normalizeName } from './confidenceEngine';
 import { namedPersons } from './namedPersons';
-import { namedPersonsData } from './namedPersonsData';
 import aspLogo from './assets/arch-st-bones-logo.png';
 import './App.css';
 
@@ -91,6 +97,16 @@ const COLOR_BY_OPTIONS = [
   { key: "clusters", label: "Clusters" },
 ];
 
+const EMPTY_FILTERS = {
+  sex: new Set(),
+  age: new Set(),
+  preservation: new Set(),
+  knownOnly: false,
+  ancestry: new Set(),
+  artifactType: new Set(),
+  materialType: new Set(),
+};
+
 const SYNC_CONFIG = {
   idle:    { dot: '',  label: '',              color: 'transparent'      },
   loading: { dot: '⟳', label: 'Syncing…',       color: 'var(--text-dim)'  },
@@ -128,11 +144,26 @@ function toChartData(obj, colorMap) {
 }
 
 // ─── Three.js Scatter Component ───────────────────────────────────────────────
-function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showSurface = true }) {
+function ThreeScatter({
+  data,
+  colorBy,
+  clusteredData,
+  filters,
+  onSelect,
+  selected,
+  theme,
+  showSurface = true,
+  highlightCluster,
+  isClusterView = false,
+}) {
   const mountRef = useRef(null);
   const sceneRef = useRef({});
   const colorByRef = useRef(colorBy);
   colorByRef.current = colorBy;
+  const highlightClusterRef = useRef(highlightCluster);
+  highlightClusterRef.current = highlightCluster;
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
   const E_MIN = 370, E_MAX = 494, E_RANGE = 124, E_MID = 432;
   const N_MIN = 303, N_MAX = 421, N_RANGE = 118, N_MID = 362;
   const DEPTH_MAX = 20;
@@ -242,15 +273,18 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
     decorations.push(labelGroup);
 
     const gridSize = Math.max(E_RANGE, N_RANGE);
-    const gridHelper = new THREE.GridHelper(gridSize, 4, 0x999999, 0xcccccc);
+    const gridMajor = currentTheme === 'dark' ? 0x999999 : 0x5f5a4d;
+    const gridMinor = currentTheme === 'dark' ? 0xcccccc : 0x7a7464;
+    const gridOpacity = currentTheme === 'dark' ? 0.3 : 0.5;
+    const gridHelper = new THREE.GridHelper(gridSize, 4, gridMajor, gridMinor);
     gridHelper.position.set(E_MID, -DEPTH_MAX * Z_SCALE, -N_MID);
     if (Array.isArray(gridHelper.material)) {
       gridHelper.material.forEach((m) => {
-        m.opacity = 0.3;
+        m.opacity = gridOpacity;
         m.transparent = true;
       });
     } else {
-      gridHelper.material.opacity = 0.3;
+      gridHelper.material.opacity = gridOpacity;
       gridHelper.material.transparent = true;
     }
     scene.add(gridHelper);
@@ -283,11 +317,19 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
 
     // Camera
     const camera = new THREE.PerspectiveCamera(40, W / H, 0.1, 2000);
-    camera.position.set(
-      E_MAX + E_RANGE * 0.8,
-      N_RANGE * 0.8,
-      -N_MIN + N_RANGE * 0.8
-    );
+    if (isClusterView) {
+      camera.position.set(
+        E_MID,
+        N_RANGE * 2.2,
+        -N_MID + N_RANGE * 1.4
+      );
+    } else {
+      camera.position.set(
+        E_MAX + E_RANGE * 0.8,
+        N_RANGE * 0.8,
+        -N_MIN + N_RANGE * 0.8
+      );
+    }
     const targetX = E_MID;
     const targetY = -DEPTH_MAX / 2 * Z_SCALE;
     const targetZ = -N_MID;
@@ -356,6 +398,7 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
       const mesh = new THREE.Mesh(coffinGeo, mat.clone());
 
       mesh.rotation.x = -Math.PI / 2;
+      mesh.rotation.z = Math.PI / 2;
       mesh.position.set(d.e, yPos, -d.n);
       mesh.userData = { data: d };
       group.add(mesh);
@@ -380,6 +423,13 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
     const mouse = new THREE.Vector2();
     let hoveredMarker = null;
 
+    function zoomToCoffin(marker, cam, orbit) {
+      const target = marker.position.clone();
+      orbit.target.copy(target);
+      cam.position.set(target.x + 16, target.y + 14, target.z + 16);
+      orbit.update();
+    }
+
     function onMouseMove(e) {
       const rect = el.getBoundingClientRect();
       mouse.x = ((e.clientX - rect.left) / W) * 2 - 1;
@@ -388,22 +438,27 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
       const hits = raycaster.intersectObjects(markers);
       el.style.cursor = hits.length ? 'pointer' : 'default';
 
-      if (hoveredMarker) {
-        const dPrev = hoveredMarker.userData.data;
-        const selG = sceneRef.current.selectedG;
-        const bs = hoveredMarker.userData.baseScale ?? (hoveredMarker.visible ? 1 : 0);
-        if (selG && dPrev.g === selG) hoveredMarker.scale.setScalar(2.2);
-        else hoveredMarker.scale.setScalar(bs);
-        hoveredMarker = null;
-      }
-      if (hits.length) {
-        hoveredMarker = hits[0].object;
-        const hm = hoveredMarker;
-        const d = hm.userData.data;
-        const selG = sceneRef.current.selectedG;
-        const bs = hm.userData.baseScale ?? (hm.visible ? 1 : 0);
-        if (selG && d.g === selG) hm.scale.setScalar(2.2);
-        else hm.scale.setScalar(bs > 0 ? bs * 1.5 : 0);
+      const skipHoverScale =
+        colorByRef.current === 'clusters' && highlightClusterRef.current != null;
+
+      if (!skipHoverScale) {
+        if (hoveredMarker) {
+          const dPrev = hoveredMarker.userData.data;
+          const selG = sceneRef.current.selectedG;
+          const bs = hoveredMarker.userData.baseScale ?? (hoveredMarker.visible ? 1 : 0);
+          if (selG && dPrev.g === selG) hoveredMarker.scale.setScalar(2.2);
+          else hoveredMarker.scale.setScalar(bs);
+          hoveredMarker = null;
+        }
+        if (hits.length) {
+          hoveredMarker = hits[0].object;
+          const hm = hoveredMarker;
+          const d = hm.userData.data;
+          const selG = sceneRef.current.selectedG;
+          const bs = hm.userData.baseScale ?? (hm.visible ? 1 : 0);
+          if (selG && d.g === selG) hm.scale.setScalar(2.2);
+          else hm.scale.setScalar(bs > 0 ? bs * 1.5 : 0);
+        }
       }
 
       if (hits.length > 0 && hits[0].object.visible) {
@@ -434,7 +489,9 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
           ${d.artifactType ? '<div class="tt-row tt-artifact">Artifact: ' + d.artifactType + '</div>' : ''}
         `;
         tooltip.style.display = 'block';
-        tooltip.style.left = `${e.clientX - rect.left + 14}px`;
+        const maxLeft = el.clientWidth * 0.72;
+        const leftPos = Math.min(e.clientX - rect.left + 14, maxLeft);
+        tooltip.style.left = `${leftPos}px`;
         tooltip.style.top = `${e.clientY - rect.top - 10}px`;
       } else {
         tooltip.style.display = 'none';
@@ -447,7 +504,21 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
       mouse.y = -((e.clientY - rect.top) / H) * 2 + 1;
       raycaster.setFromCamera(mouse, camera);
       const hits = raycaster.intersectObjects(markers);
-      if (hits.length) onSelect(hits[0].object.userData.data);
+
+      if (hits.length > 0 && hits[0].object.visible) {
+        const marker = hits[0].object;
+        const burial = marker.userData.data;
+
+        onSelectRef.current(burial);
+        zoomToCoffin(marker, camera, controls);
+
+        markers.forEach((m) => {
+          m.material.emissiveIntensity = 0.1;
+          m.scale.setScalar(1);
+        });
+        marker.material.emissiveIntensity = 0.8;
+        marker.scale.setScalar(1.6);
+      }
     }
 
     renderer.domElement.addEventListener('mousemove', onMouseMove);
@@ -531,26 +602,24 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
     if (!markers) return;
     markers.forEach((m) => {
       const d = m.userData.data;
-      let colorHex;
+      let color;
       if (colorBy === 'clusters') {
-        colorHex = d.clusterColor || '#666666';
+        const clustered = clusteredData?.find((c) => c.g === d.g);
+        color = new THREE.Color(clustered?.clusterColor || '#666666');
       } else {
-        colorHex = COLOR_MAPS[colorBy]?.[d[colorBy]] || '#888888';
+        color = new THREE.Color(COLOR_MAPS[colorBy]?.[d[colorBy]] || '#888888');
       }
-      const color = new THREE.Color(colorHex);
       m.material.color.set(color);
       m.material.emissive.set(color);
       m.material.transparent = true;
-      if (colorBy === 'clusters' && d.isNoise) {
-        m.material.opacity = 0.3;
-      } else {
-        m.material.opacity = 0.92;
-      }
+      m.material.opacity = 0.88;
+      m.material.emissiveIntensity = 0.15;
+      m.scale.setScalar(1);
       m.material.needsUpdate = true;
     });
-  }, [colorBy, data]);
+  }, [colorBy, data, clusteredData]);
 
-  // Visibility, selection highlight, and base scale (incl. cluster noise)
+  // Visibility and single-burial selection
   useEffect(() => {
     const { markers } = sceneRef.current;
     if (!markers) return;
@@ -562,6 +631,7 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
       const noiseSmall = colorBy === 'clusters' && d.isNoise;
       const base = visible ? (noiseSmall ? 0.6 : 1) : 0;
       m.userData.baseScale = base;
+
       const isSel = selected && d.g === selected.g;
       if (isSel && visible) {
         m.scale.setScalar(2.2);
@@ -570,8 +640,56 @@ function ThreeScatter({ data, colorBy, filters, onSelect, selected, theme, showS
         m.scale.setScalar(base);
         m.material.emissiveIntensity = 0.15;
       }
+      if (colorBy === 'clusters' && d.isNoise) {
+        m.material.opacity = 0.3;
+      } else {
+        m.material.opacity = 0.88;
+      }
+      m.material.needsUpdate = true;
     });
   }, [filters, colorBy, data, selected]);
+
+  useEffect(() => {
+    const { markers } = sceneRef.current;
+    if (!markers?.length) return;
+    if (colorBy !== 'clusters') return;
+
+    markers.forEach((m) => {
+      const d = m.userData.data;
+      const cd = clusteredData?.find((x) => x.g === d.g);
+
+      if (highlightCluster === null || highlightCluster === undefined) {
+        const col = new THREE.Color(cd?.clusterColor || '#666666');
+        m.material.color.set(col);
+        m.material.emissive.set(col);
+        m.material.emissiveIntensity = 0.18;
+        m.material.opacity = 0.88;
+        m.scale.setScalar(1.0);
+        m.material.needsUpdate = true;
+        return;
+      }
+
+      const inSelected = highlightCluster === -1
+        ? cd?.isNoise === true
+        : cd?.clusterId === highlightCluster;
+
+      if (inSelected) {
+        const col = new THREE.Color(cd?.clusterColor || '#c9940a');
+        m.material.color.set(col);
+        m.material.emissive.set(col);
+        m.material.emissiveIntensity = 0.75;
+        m.material.opacity = 1.0;
+        m.scale.setScalar(1.5);
+      } else {
+        m.material.color.set(new THREE.Color(0x1e1e1e));
+        m.material.emissive.set(new THREE.Color(0x000000));
+        m.material.emissiveIntensity = 0.0;
+        m.material.opacity = 0.12;
+        m.scale.setScalar(0.85);
+      }
+      m.material.needsUpdate = true;
+    });
+  }, [highlightCluster, clusteredData, colorBy]);
 
   return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />;
 }
@@ -652,7 +770,15 @@ const EDIT_FIELDS = [
 ];
 
 // ─── Detail Panel ─────────────────────────────────────────────────────────────
-function DetailPanel({ burial, onClose, editing, onCancelEdit, onSavePatch }) {
+function DetailPanel({
+  burial,
+  onClose,
+  editing,
+  onCancelEdit,
+  onSavePatch,
+  clusteredData = [],
+  onOpenClusterAnalysis,
+}) {
   const [draft, setDraft] = useState(null);
 
   useEffect(() => {
@@ -665,14 +791,25 @@ function DetailPanel({ burial, onClose, editing, onCancelEdit, onSavePatch }) {
     setDraft(next);
   }, [editing, burial]);
 
-  if (!burial) return (
-    <div className="detail-panel empty">
-      <div className="detail-empty-msg">
-        <img src={aspLogo} alt="" className="header-logo-sm" />
-        <p>Click a burial marker in the 3D view to inspect its record</p>
+  if (!burial) {
+    return (
+      <div className="detail-panel empty">
+        <div className="detail-empty">
+          <div className="detail-empty-inner">
+            <span className="detail-empty-icon">⬡</span>
+            <p className="detail-empty-title">No burial selected</p>
+            <p className="detail-empty-hint">
+              Click any coffin in the 3D view
+              <br />
+              or search a G-number above
+              <br />
+              to view its full record here
+            </p>
+          </div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   const platesText = burial.coffinPlates || '';
   const hasAgeInscription = /aged\s+\d+/i.test(platesText);
@@ -718,12 +855,46 @@ function DetailPanel({ burial, onClose, editing, onCancelEdit, onSavePatch }) {
     onSavePatch(patch);
   }
 
+  const clusterRow =
+    clusteredData.length > 0
+      ? (() => {
+          const c = clusteredData.find((x) => x.g === burial.g);
+          if (!c || c.isNoise) {
+            return (
+              <div className="burial-cluster-tag outlier">
+                Spatial outlier — no cluster
+              </div>
+            );
+          }
+          return (
+            <div
+              className="burial-cluster-tag"
+              style={{ borderLeftColor: c.clusterColor }}
+              onClick={() => onOpenClusterAnalysis?.(c.clusterId)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onOpenClusterAnalysis?.(c.clusterId);
+                }
+              }}
+            >
+              <span className="bct-dot" style={{ background: c.clusterColor }} />
+              Cluster {c.clusterId + 1}
+              <span className="bct-link">→ Analyse</span>
+            </div>
+          );
+        })()
+      : null;
+
   return (
     <div className="detail-panel">
       <div className="detail-header">
         <span className="detail-g">{burial.g}</span>
         <button className="detail-close" onClick={onClose} type="button">✕</button>
       </div>
+      {clusterRow}
       {editing && draft ? (
         <div className="detail-edit-form">
           <p className="detail-edit-hint">Changes apply to this session (with local overrides until refresh).</p>
@@ -803,7 +974,7 @@ export default function App() {
   const [showSurface, setShowSurface] = useState(true);
   const [colorBy, setColorBy] = useState('sex');
   const [selected, setSelected] = useState(null);
-  const [activeTab, setActiveTab] = useState('scatter'); // 'scatter' | 'charts'
+  const [activeTab, setActiveTab] = useState('scatter'); // 'scatter' | 'charts' | 'cluster'
   const [rightTab, setRightTab] = useState('record'); // 'record' | 'matches'
   const [isWideLayout, setIsWideLayout] = useState(
     typeof window !== 'undefined' ? window.innerWidth >= 1400 : true
@@ -811,6 +982,7 @@ export default function App() {
   const [searchVal, setSearchVal] = useState('');
   const [searchStatus, setSearchStatus] = useState(null); // null | 'found' | 'not_found'
   const [searchSuccessFlash, setSearchSuccessFlash] = useState(false);
+  const [searchTopN, setSearchTopN] = useState(null);
   const [filters, setFilters] = useState({
     sex: new Set(),
     age: new Set(),
@@ -822,7 +994,6 @@ export default function App() {
   });
   const searchStatusTimeoutRef = useRef(null);
   const searchSuccessTimeoutRef = useRef(null);
-
   const [liveData, setLiveData] = useState(null);
   const [syncStatus, setSyncStatus] = useState('idle');
   // 'idle' | 'loading' | 'synced' | 'cached' | 'offline' | 'error'
@@ -831,8 +1002,10 @@ export default function App() {
   const [overrides, setOverrides] = useState({});
   const [currentUser, setCurrentUser] = useState(() => getCurrentUser());
   const [editing, setEditing] = useState(false);
-  const [epsilon, setEpsilon] = useState(8);
-  const [minPts, setMinPts] = useState(3);
+  const [selectedCluster, setSelectedCluster] = useState(null);
+  /** 3D highlight driven only from Cluster Analysis tab / “View in 3D” — not coffin clicks */
+  const [highlightCluster, setHighlightCluster] = useState(null);
+  const [clusterSelectedBurial, setClusterSelectedBurial] = useState(null);
 
   const isEditor = currentUser !== null;
   const userIsAdmin = isAdmin(currentUser);
@@ -892,10 +1065,58 @@ export default function App() {
     setEditing(false);
   }, [selected?.g]);
 
-  const clusteredData = useMemo(
-    () => clusterBurials(mergedData, epsilon, minPts),
-    [mergedData, epsilon, minPts]
-  );
+  const handleScatterSelect = useCallback((burial) => {
+    setHighlightCluster(null);
+    setSelected(burial);
+    setRightTab('record');
+    setSearchTopN(null);
+  }, []);
+
+  const clearRecordSelection = useCallback(() => {
+    setSelected(null);
+    setHighlightCluster(null);
+    setEditing(false);
+  }, []);
+
+  const openClusterAnalysis = useCallback((clusterId) => {
+    setSelectedCluster(clusterId);
+    setActiveTab('cluster');
+  }, []);
+
+  const [clusteredData, setClusteredData] = useState([]);
+  const [clusteringDone, setClusteringDone] = useState(false);
+  const [clusterEpsilonUsed, setClusterEpsilonUsed] = useState(null);
+
+  useEffect(() => {
+    if (!mergedData.length) {
+      setClusteredData([]);
+      setClusteringDone(false);
+      setClusterEpsilonUsed(null);
+      return;
+    }
+    setClusteringDone(false);
+    const t = setTimeout(() => {
+      const result = clusterBurials(mergedData, null, 2);
+      setClusteredData(result);
+      setClusterEpsilonUsed(getLastClusterEpsilon());
+      setClusteringDone(true);
+    }, 50);
+    return () => clearTimeout(t);
+  }, [mergedData]);
+
+  useEffect(() => {
+    if (colorBy !== 'clusters') setHighlightCluster(null);
+  }, [colorBy]);
+
+  useEffect(() => {
+    setClusterSelectedBurial(null);
+  }, [selectedCluster]);
+
+  useEffect(() => {
+    if (activeTab !== 'cluster') {
+      setHighlightCluster(null);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     setSelected((sel) => {
@@ -910,7 +1131,7 @@ export default function App() {
 
     const firstPass = {};
     clusteredData.forEach((burial) => {
-      const results = scoreMatch(burial, namedPersonsData, null);
+      const results = scoreMatch(burial, namedPersons, null);
       if (results.length > 0) {
         firstPass[burial.g] = {
           clusterId: burial.clusterId,
@@ -1059,10 +1280,11 @@ export default function App() {
     const raw = searchVal.trim().toUpperCase().replace(/^G-?/, '');
     const padded = raw.padStart(3, '0');
 
-    const found = clusteredData.find((d) => {
-      const gValue = d.g.replace('G-', '');
-      return gValue === raw || gValue === padded;
-    });
+    const found = mergedData.find(
+      (d) =>
+        d.g.replace('G-', '') === raw ||
+        d.g.replace('G-', '') === padded
+    );
 
     if (searchStatusTimeoutRef.current) {
       clearTimeout(searchStatusTimeoutRef.current);
@@ -1072,14 +1294,20 @@ export default function App() {
     }
 
     if (found) {
+      setHighlightCluster(null);
       setSelected(found);
       setSearchStatus('found');
+      setRightTab('matches');
+      setSearchTopN(5);
+
       setSearchSuccessFlash(true);
       searchSuccessTimeoutRef.current = setTimeout(() => setSearchSuccessFlash(false), 1000);
     } else {
+      setHighlightCluster(null);
       setSelected(null);
       setSearchStatus('not_found');
       setSearchSuccessFlash(false);
+      setSearchTopN(null);
     }
 
     searchStatusTimeoutRef.current = setTimeout(() => setSearchStatus(null), 4000);
@@ -1174,6 +1402,18 @@ export default function App() {
       <div className="tab-bar">
         <button className={`tab-btn ${activeTab === 'scatter' ? 'active' : ''}`}
           onClick={() => setActiveTab('scatter')}>3D Spatial View</button>
+        <button
+          type="button"
+          className={`tab-btn ${activeTab === 'cluster' ? 'active' : ''}`}
+          onClick={() => setActiveTab('cluster')}
+        >
+          Cluster Analysis
+          {clusteringDone && (
+            <span className="tab-badge">
+              {new Set(clusteredData.filter((d) => !d.isNoise).map((d) => d.clusterId)).size}
+            </span>
+          )}
+        </button>
         <button className={`tab-btn ${activeTab === 'charts' ? 'active' : ''}`}
           onClick={() => setActiveTab('charts')}>Analytics</button>
         <div className="tab-search">
@@ -1210,7 +1450,7 @@ export default function App() {
       </div>
 
       {/* Main content */}
-      {activeTab === 'scatter' ? (
+      {activeTab === 'scatter' && (
         <div className="scatter-layout">
           {/* Left sidebar: filters */}
           <aside className="sidebar">
@@ -1229,57 +1469,6 @@ export default function App() {
                 ))}
               </div>
             </div>
-
-            {colorBy === 'clusters' && (
-              <div className="sidebar-section cluster-controls">
-                <h3 className="sidebar-heading">Cluster Settings</h3>
-
-                <div className="cluster-stat">
-                  <span className="count-num">{clusterCount}</span>
-                  <span className="count-label"> clusters found</span>
-                </div>
-                <div className="cluster-stat">
-                  <span className="count-num" style={{ color: 'var(--text-dim)' }}>
-                    {noiseCount}
-                  </span>
-                  <span className="count-label"> outlier burials</span>
-                </div>
-
-                <div className="slider-row">
-                  <label className="slider-label">
-                    Search Radius: <strong>{epsilon} ft</strong>
-                  </label>
-                  <input
-                    type="range"
-                    min={3}
-                    max={20}
-                    step={0.5}
-                    value={epsilon}
-                    onChange={(e) => setEpsilon(parseFloat(e.target.value))}
-                    className="cluster-slider"
-                  />
-                  <div className="slider-hint">
-                    Smaller = tighter groups · Larger = broader zones
-                  </div>
-                </div>
-
-                <div className="slider-row">
-                  <label className="slider-label">
-                    Min. Burials/Cluster: <strong>{minPts}</strong>
-                  </label>
-                  <input
-                    type="range"
-                    min={2}
-                    max={10}
-                    step={1}
-                    value={minPts}
-                    onChange={(e) => setMinPts(parseInt(e.target.value, 10))}
-                    className="cluster-slider"
-                  />
-                  <div className="slider-hint">Higher = only dense groups shown</div>
-                </div>
-              </div>
-            )}
 
             <div className="sidebar-section">
               <h3 className="sidebar-heading">Filter: Sex</h3>
@@ -1387,51 +1576,51 @@ export default function App() {
               <span className="count-label"> of {stats.total} graves</span>
             </div>
 
-            {/* Legend */}
-            <div className="sidebar-section legend-section">
-              <h3 className="sidebar-heading">Legend — {COLOR_BY_OPTIONS.find((o) => o.key === colorBy)?.label || colorBy}</h3>
-              {colorBy === 'clusters' ? (() => {
-                const clusterGroups = {};
-                clusteredData.forEach((d) => {
-                  const key = d.clusterId === -1 ? 'Outliers' : `Cluster ${d.clusterId + 1}`;
-                  if (!clusterGroups[key]) clusterGroups[key] = { color: d.clusterColor, count: 0 };
-                  clusterGroups[key].count += 1;
-                });
-                return Object.entries(clusterGroups)
-                  .sort((a, b) => {
-                    if (a[0] === 'Outliers') return 1;
-                    if (b[0] === 'Outliers') return -1;
-                    return b[1].count - a[1].count;
-                  })
-                  .map(([label, { color, count }]) => (
-                    <div key={label} className="legend-row legend-row-cluster">
-                      <span className="filter-dot" style={{ background: color }} />
-                      <span>{label}</span>
-                      <span className="filter-count">({count})</span>
-                    </div>
-                  ));
-              })() : (
-                Object.entries(COLOR_MAPS[colorBy]).map(([k, c]) => (
+            {/* Legend / key (hidden in cluster mode to avoid clutter) */}
+            {colorBy !== 'clusters' && (
+              <div className="sidebar-section legend-section">
+                <h3 className="sidebar-heading">
+                  Legend — {COLOR_BY_OPTIONS.find((o) => o.key === colorBy)?.label || colorBy}
+                </h3>
+                {Object.entries(COLOR_MAPS[colorBy]).map(([k, c]) => (
                   <div key={k} className="legend-row">
                     <span className="filter-dot" style={{ background: c }} />
                     {k}
                   </div>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </aside>
 
           {/* 3D Canvas */}
           <div className="canvas-area">
-            <ThreeScatter
-              data={clusteredData}
-              colorBy={colorBy}
-              filters={filters}
-              onSelect={setSelected}
-              selected={selected}
-              theme={theme}
-              showSurface={showSurface}
-            />
+            {clusteredData.length > 0 ? (
+              <ThreeScatter
+                key="main-scatter"
+                data={clusteredData}
+                colorBy={colorBy}
+                clusteredData={clusteredData}
+                filters={filters}
+                onSelect={handleScatterSelect}
+                selected={selected}
+                theme={theme}
+                showSurface={showSurface}
+                highlightCluster={
+                  activeTab === 'scatter' && colorBy === 'clusters'
+                    ? highlightCluster
+                    : null
+                }
+              />
+            ) : (
+              <div className="canvas-scatter-placeholder" aria-live="polite">
+                <span className="detail-icon">⬡</span>
+                <p>
+                  {mergedData.length === 0
+                    ? 'Loading burial data…'
+                    : 'Computing spatial clusters…'}
+                </p>
+              </div>
+            )}
             <div className="scene-title">
               <h2>Spatial Distribution of Burial Features</h2>
               <p>Site area 124 × 118 ft — Depth 0 to 20 ft</p>
@@ -1445,11 +1634,26 @@ export default function App() {
                 Off
               </button>
             </div>
+            {colorBy !== 'clusters' && (
+              <div className="map-key-stack" aria-label="3D map key">
+                <div className="map-key-card">
+                  <div className="map-key-title">
+                    {COLOR_BY_OPTIONS.find((o) => o.key === colorBy)?.label || colorBy}
+                  </div>
+                  {Object.entries(COLOR_MAPS[colorBy] || {}).map(([label, color]) => (
+                    <div key={label} className="map-key-row">
+                      <span className="map-key-dot" style={{ background: color }} />
+                      <span>{label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="canvas-hint">Drag to rotate · Scroll to zoom · Click to inspect</div>
           </div>
 
           {/* Right: stacked detail + confidence panels */}
-          <div className="right-column">
+          <div className={`right-column${selected ? ' has-selection' : ''}`}>
             {!isWideLayout && (
               <div className="right-column-tabs">
                 <button
@@ -1468,7 +1672,7 @@ export default function App() {
             )}
 
             {isWideLayout ? (
-              <>
+              <div className="right-tab-content right-tab-content-wide">
                 <div className="right-panel-slot record-slot">
                   {selected && !editing && (
                     <button
@@ -1493,7 +1697,7 @@ export default function App() {
                   )}
                   <DetailPanel
                     burial={selected}
-                    onClose={() => setSelected(null)}
+                    onClose={clearRecordSelection}
                     editing={editing}
                     onCancelEdit={() => setEditing(false)}
                     onSavePatch={(patch) => {
@@ -1504,17 +1708,22 @@ export default function App() {
                       }));
                       setEditing(false);
                     }}
+                    clusteredData={clusteredData}
+                    onOpenClusterAnalysis={openClusterAnalysis}
                   />
                 </div>
                 <div className="right-panel-slot matches-slot">
                   <ConfidencePanel
                     burial={selected}
                     clusterPriors={clusterPriors}
-                    onClose={() => setSelected(null)}
+                    topN={searchTopN}
+                    showComparisonTable={!!searchTopN}
+                    onClose={clearRecordSelection}
                   />
                 </div>
-              </>
+              </div>
             ) : (
+              <div className="right-tab-content">
               <div className="right-panel-slot mobile-slot">
                 {rightTab === 'record' ? (
                   <>
@@ -1541,7 +1750,7 @@ export default function App() {
                     )}
                     <DetailPanel
                       burial={selected}
-                      onClose={() => setSelected(null)}
+                      onClose={clearRecordSelection}
                       editing={editing}
                       onCancelEdit={() => setEditing(false)}
                       onSavePatch={(patch) => {
@@ -1552,20 +1761,26 @@ export default function App() {
                         }));
                         setEditing(false);
                       }}
+                      clusteredData={clusteredData}
+                      onOpenClusterAnalysis={openClusterAnalysis}
                     />
                   </>
                 ) : (
                   <ConfidencePanel
                     burial={selected}
                     clusterPriors={clusterPriors}
-                    onClose={() => setSelected(null)}
+                    topN={searchTopN}
+                    showComparisonTable={!!searchTopN}
+                    onClose={clearRecordSelection}
                   />
                 )}
+              </div>
               </div>
             )}
           </div>
         </div>
-      ) : (
+      )}
+      {activeTab === 'charts' && (
         <div className="charts-layout">
           <div className="charts-grid">
             <div className="chart-card">
@@ -1641,10 +1856,16 @@ export default function App() {
 
             <div className="chart-card wide">
               <h3 className="chart-title">
-                Spatial Clusters (ε={epsilon}ft, min={minPts} burials)
+                Spatial Clusters (
+                {clusteringDone && clusterEpsilonUsed != null
+                  ? `ε=${clusterEpsilonUsed.toFixed(1)} ft`
+                  : 'ε=auto'}
+                , min=2, N/E plane)
               </h3>
               <p className="chart-sub">
-                {clusterCount} clusters identified · {noiseCount} outliers · DBSCAN spatial grouping by burial proximity
+                {clusteringDone
+                  ? `${clusterCount} clusters identified · ${noiseCount} outliers · DBSCAN (plan view), targets ~50–100 clusters`
+                  : 'Computing clusters…'}
               </p>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={clusterBarData} margin={{ top: 5, right: 10, bottom: 40, left: 0 }}>
@@ -1707,6 +1928,175 @@ export default function App() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+      {activeTab === 'cluster' && (
+        <div className="cluster-layout">
+          {!clusteringDone && (
+            <div className="cluster-loading">
+              <div className="cluster-loading-spinner">⟳</div>
+              <p>Running DBSCAN spatial analysis…</p>
+              <p className="cluster-loading-sub">
+                Sweeping epsilon to find optimal cluster count
+              </p>
+            </div>
+          )}
+          {clusteringDone && (
+            <>
+              <div className="cluster-sidebar">
+                <h3 className="sidebar-heading">All Clusters</h3>
+                <div className="cluster-show-all">
+                  <button
+                    type="button"
+                    className={`cluster-show-all-btn ${selectedCluster === null ? 'active' : ''}`}
+                    onClick={() => {
+                      setSelectedCluster(null);
+                      setHighlightCluster(null);
+                    }}
+                  >
+                    ◉ Show All Clusters
+                  </button>
+                </div>
+                <div className="cluster-list-scroll">
+                  {Array.from(
+                    new Set(clusteredData
+                      .filter((d) => !d.isNoise)
+                      .map((d) => d.clusterId))
+                  )
+                    .sort((a, b) => {
+                      const countA = clusteredData.filter((d) => d.clusterId === a).length;
+                      const countB = clusteredData.filter((d) => d.clusterId === b).length;
+                      return countB - countA;
+                    })
+                    .map((cid) => {
+                      const burials = clusteredData.filter((d) => d.clusterId === cid);
+                      const color = burials[0]?.clusterColor || '#888';
+                      return (
+                        <div
+                          key={cid}
+                          className={`cluster-list-item ${selectedCluster === cid ? 'active' : ''}`}
+                          onClick={() => {
+                            setSelectedCluster(cid);
+                            setHighlightCluster(cid);
+                          }}
+                          style={{ borderLeft: `3px solid ${color}` }}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelectedCluster(cid);
+                              setHighlightCluster(cid);
+                            }
+                          }}
+                        >
+                          <span className="cli-dot" style={{ background: color }} />
+                          <span className="cli-name">Cluster {cid + 1}</span>
+                          <span className="cli-count">{burials.length}</span>
+                        </div>
+                      );
+                    })}
+
+                  <div
+                    className={`cluster-list-item ${selectedCluster === -1 ? 'active' : ''}`}
+                    onClick={() => {
+                      setSelectedCluster(-1);
+                      setHighlightCluster(-1);
+                    }}
+                    style={{ borderLeft: '3px solid #555' }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setSelectedCluster(-1);
+                        setHighlightCluster(-1);
+                      }
+                    }}
+                  >
+                    <span className="cli-dot" style={{ background: '#555' }} />
+                    <span className="cli-name">Outliers</span>
+                    <span className="cli-count">
+                      {clusteredData.filter((d) => d.isNoise).length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="cluster-3d-pane">
+                <ThreeScatter
+                  key="cluster-scatter"
+                  data={mergedData}
+                  colorBy="clusters"
+                  clusteredData={clusteredData}
+                  filters={EMPTY_FILTERS}
+                  onSelect={(burial) => {
+                    setSelected(burial);
+                    setClusterSelectedBurial(burial);
+                  }}
+                  selected={clusterSelectedBurial}
+                  highlightCluster={highlightCluster}
+                  showSurface={showSurface}
+                  theme={theme}
+                  isClusterView
+                />
+                {clusterSelectedBurial && (
+                  <div className="cluster-mini-record">
+                    <div className="cmr-header">
+                      <span className="cmr-g">{clusterSelectedBurial.g}</span>
+                      <span className="cmr-info">
+                        {clusterSelectedBurial.sex} · {clusterSelectedBurial.age}
+                        {clusterSelectedBurial.ageCat
+                          ? ` (${clusterSelectedBurial.ageCat})` : ''}
+                        · {clusterSelectedBurial.depth} ft
+                      </span>
+                      <button
+                        className="cmr-full-btn"
+                        type="button"
+                        onClick={() => {
+                          setSelected(clusterSelectedBurial);
+                          setRightTab('record');
+                          setActiveTab('scatter');
+                        }}
+                      >
+                        Full Record →
+                      </button>
+                      <button
+                        className="cmr-close"
+                        type="button"
+                        onClick={() => setClusterSelectedBurial(null)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="cluster-detail">
+                <ClusterAnalysis
+                  clusterId={selectedCluster}
+                  clusteredData={clusteredData}
+                  allData={mergedData}
+                  clusterPriors={clusterPriors}
+                  onSelectBurial={(burial) => {
+                    setClusterSelectedBurial(burial);
+                  }}
+                  onView3D={(cid) => {
+                    setActiveTab('scatter');
+                    setColorBy('clusters');
+                    setHighlightCluster(cid);
+                    setSelectedCluster(cid);
+                  }}
+                  onOpenInMain={(burial) => {
+                    setSelected(burial);
+                    setRightTab('record');
+                    setActiveTab('scatter');
+                  }}
+                />
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
