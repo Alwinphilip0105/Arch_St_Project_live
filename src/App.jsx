@@ -1348,47 +1348,6 @@ export default function App() {
           <StatCard label="Avg Depth" value={stats.avgDepth + ' ft'} />
           <StatCard label="Soft Tissue" value={stats.withSoftTissue} />
         </div>
-        <div className="sync-controls">
-          <div
-            className="sync-badge"
-            style={{ color: SYNC_CONFIG[syncStatus].color }}
-            title={
-              lastSynced
-                ? `Last synced: ${lastSynced.toLocaleTimeString()}`
-                : 'Not yet synced'
-            }
-          >
-            <span className="sync-dot">{SYNC_CONFIG[syncStatus].dot}</span>
-            <span className="sync-label">{SYNC_CONFIG[syncStatus].label}</span>
-          </div>
-          <button
-            className="sync-btn"
-            onClick={() => syncSheet(true)}
-            disabled={syncStatus === 'loading'}
-            title="Force refresh from Google Sheet"
-            type="button"
-          >
-            ⟳
-          </button>
-        </div>
-        {isEditor ? (
-          <div className="editor-session">
-            <div className="editor-avatar">
-              {getDisplayName(currentUser).charAt(0).toUpperCase()}
-            </div>
-            <span className="editor-name">{getDisplayName(currentUser)}</span>
-            <span className={`role-badge role-${getUserRole(currentUser)}`}>
-              {getUserRole(currentUser)}
-            </span>
-            <button className="logout-btn" type="button" onClick={logout}>
-              Sign out
-            </button>
-          </div>
-        ) : (
-          <button className="sign-in-btn" type="button" onClick={openLogin}>
-            Sign In
-          </button>
-        )}
         <button
           className="theme-toggle"
           onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
