@@ -322,6 +322,15 @@ export default function ConfidencePanel({
     setViewMode("cards");
   };
 
+  const handlePanelClose = () => {
+    // If user is in compare flow, close compare UI first without clearing selection.
+    if (comparePopupOpen || viewMode === "table") {
+      closeComparePopup();
+      return;
+    }
+    onClose?.();
+  };
+
   const matches = useMemo(() => {
     if (!burial) return [];
     return scoreMatch(burial, namedPersonsData, clusterPriors);
@@ -421,7 +430,7 @@ export default function ConfidencePanel({
         <div>
           <div className="confidence-g">{burial.g} Identity Confidence Matches</div>
         </div>
-        <button className="confidence-close" onClick={onClose} type="button">
+        <button className="confidence-close" onClick={handlePanelClose} type="button">
           ✕
         </button>
       </div>
