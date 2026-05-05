@@ -3,8 +3,6 @@
  * Complements spatial DBSCAN in `utils/dbscan.js` (family cluster priors).
  */
 
-import { namedPersonsData } from "./namedPersonsData";
-
 // ─── Helpers (Cell 69) ───────────────────────────────────────────────────────
 
 export function safeStr(x) {
@@ -93,9 +91,9 @@ export function parseAgeRange(ageRange, ageCategory) {
 
 // ─── Sex rarity weights (Cell 74) ────────────────────────────────────────────
 
-function buildSexCounts() {
+function buildSexCounts(candidates) {
   const counts = { Male: 0, Female: 0, Unknown: 0 };
-  namedPersonsData.forEach((p) => {
+  candidates.forEach((p) => {
     const s = safeStr(p.sex);
     if (s === "Male") counts.Male++;
     else if (s === "Female") counts.Female++;
@@ -104,21 +102,19 @@ function buildSexCounts() {
   return counts;
 }
 
-const SEX_COUNTS = buildSexCounts();
-const TOTAL_NAMED = namedPersonsData.length;
-
-function sexWeight(sexVal) {
+function sexWeight(sexVal, sexCounts, totalNamed) {
   const s = safeStr(sexVal).toLowerCase();
   if (!s || ["unknown", "n/a", ""].includes(s)) return 0;
   const key = s.startsWith("m") ? "Male" : s.startsWith("f") ? "Female" : null;
   if (!key) return 0;
-  const count = SEX_COUNTS[key] || 1;
-  return Math.max(1.0, Math.log(TOTAL_NAMED / count));
+  const count = sexCounts[key] || 1;
+  const denom = Math.max(totalNamed || 0, 1);
+  return Math.max(1.0, Math.log(denom / count));
 }
 
 // ─── score_candidate (Cell 74) ───────────────────────────────────────────────
 
-function scoreCandidate(burial, candidate, familyPrior = null) {
+function scoreCandidate(burial, candidate, sexCounts, totalNamed, familyPrior = null) {
   let score = 0.0;
   const matchedFeatures = [];
   const unmatchedFeatures = [];
@@ -129,7 +125,7 @@ function scoreCandidate(burial, candidate, familyPrior = null) {
 
   if (bsex && !sexUnknown.includes(bsex) && csex && !sexUnknown.includes(csex)) {
     if (bsex[0] === csex[0]) {
-      const w = sexWeight(burial.sex);
+      const w = sexWeight(burial.sex, sexCounts, totalNamed);
       score += w;
       matchedFeatures.push(`Sex (${w.toFixed(1)})`);
     } else {
@@ -211,10 +207,15 @@ function scoreCandidate(burial, candidate, familyPrior = null) {
 // ─── run_matcher (Cell 75) ───────────────────────────────────────────────────
 
 function runMatcher(burial, candidates, topN = 10, familyPrior = null) {
+  const sexCounts = buildSexCounts(candidates);
+  const totalNamed = candidates.length;
+
   const scored = candidates.map((candidate) => {
     const { score, matchedFeatures, unmatchedFeatures } = scoreCandidate(
       burial,
       candidate,
+      sexCounts,
+      totalNamed,
       familyPrior
     );
     return { candidate, score, matchedFeatures, unmatchedFeatures };
