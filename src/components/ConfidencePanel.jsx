@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { scoreMatch } from "../confidenceEngine";
-import { namedPersons, NAMED_COUNT } from "../namedPersons";
+import { namedPersonsData, NAMED_COUNT } from "../namedPersonsData";
 import "./ConfidencePanel.css";
 
 const CONFIDENCE_COLORS = {
@@ -363,7 +363,7 @@ export default function ConfidencePanel({
 
   const matches = useMemo(() => {
     if (!burial) return [];
-    return scoreMatch(burial, namedPersons, clusterPriors);
+    return scoreMatch(burial, namedPersonsData, clusterPriors);
   }, [burial, clusterPriors]);
 
   const displayMatches = useMemo(() => {

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { scoreMatch } from '../confidenceEngine';
-import { namedPersons } from '../namedPersons';
+import { namedPersonsData } from '../namedPersonsData';
 
 function countBy(arr, key) {
   return arr.reduce((acc, d) => {
@@ -406,7 +406,7 @@ function CoffinIDMatches({ burial, clusteredData, clusterPriors }) {
     if (!burial) return [];
     const clusterId = clusteredData?.find((c) => c.g === burial.g)?.clusterId;
     const prior = clusterPriors?.[clusterId] || null;
-    return scoreMatch(burial, namedPersons, prior);
+    return scoreMatch(burial, namedPersonsData, prior);
   }, [burial, clusteredData, clusterPriors]);
 
   const clusterInfo = clusteredData?.find((c) => c.g === burial?.g);

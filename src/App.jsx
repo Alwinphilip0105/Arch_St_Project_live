@@ -24,7 +24,7 @@ import { clusterBurials, getLastClusterEpsilon } from './utils/dbscan';
 import ConfidencePanel from './components/ConfidencePanel';
 import ClusterAnalysis from './components/ClusterAnalysis';
 import { scoreMatch, normalizeName } from './confidenceEngine';
-import { namedPersons } from './namedPersons';
+import { namedPersonsData } from './namedPersonsData';
 import aspLogo from './assets/arch-st-bones-logo.png';
 import './App.css';
 
@@ -1110,7 +1110,7 @@ export default function App() {
 
     const firstPass = {};
     clusteredData.forEach((burial) => {
-      const results = scoreMatch(burial, namedPersons, null);
+      const results = scoreMatch(burial, namedPersonsData, null);
       if (results.length > 0) {
         firstPass[burial.g] = {
           clusterId: burial.clusterId,
@@ -1184,7 +1184,7 @@ export default function App() {
   const visibleCount = filteredData.length;
   const matches = useMemo(() => {
     if (!selected) return [];
-    return scoreMatch(selected, namedPersons, clusterPriors).filter(Boolean);
+    return scoreMatch(selected, namedPersonsData, clusterPriors).filter(Boolean);
   }, [selected, clusterPriors]);
 
   const highCount = useMemo(
