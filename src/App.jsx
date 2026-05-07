@@ -163,7 +163,7 @@ function ThreeScatter({
     canvas.height = 64;
     const ctx = canvas.getContext('2d');
     if (!ctx) return new THREE.Sprite();
-    ctx.font = `bold ${fontSize}px Palatino, Georgia, serif`;
+    ctx.font = `bold ${fontSize}px "Open Sans", system-ui, sans-serif`;
     ctx.fillStyle = color;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -1131,15 +1131,19 @@ export default function App() {
         if (clusterId === -1) return;
         if (!priors[clusterId]) priors[clusterId] = {};
 
-        const add = (name, weight) => {
+        const add = (name, weight, includeLast = false, lastFactor = 0) => {
           if (!name) return;
           const key = normalizeName(name);
-          const last = key.split(' ').at(-1);
           priors[clusterId][key] = (priors[clusterId][key] || 0) + weight;
-          priors[clusterId][last] = (priors[clusterId][last] || 0) + weight * 0.4;
+          if (includeLast) {
+            const last = key.split(' ').at(-1);
+            priors[clusterId][last] = (priors[clusterId][last] || 0) + weight * lastFactor;
+          }
         };
 
-        add(top1Name, (top1Conf / 100) * 2.0);
+        // Match notebook priors:
+        // top1 contributes full-name and last-name, top2/top3 full-name only.
+        add(top1Name, (top1Conf / 100) * 2.0, true, 0.4);
         add(top2Name, (top2Conf / 100) * 1.0);
         add(top3Name, (top3Conf / 100) * 0.5);
         add(knownName, 3.0);

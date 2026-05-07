@@ -118,6 +118,8 @@ function scoreCandidate(burial, candidate, sexCounts, totalNamed, familyPrior = 
   let score = 0.0;
   const matchedFeatures = [];
   const unmatchedFeatures = [];
+  let yearDiff = null;
+  let familyPriorBoost = 0;
 
   const bsex = safeStr(burial.sex).toLowerCase();
   const csex = safeStr(candidate.sex).toLowerCase();
@@ -141,6 +143,7 @@ function scoreCandidate(burial, candidate, sexCounts, totalNamed, familyPrior = 
 
   if (burialYear !== null && candidateYear !== null) {
     const diff = Math.abs(burialYear - candidateYear);
+    yearDiff = diff;
     if (diff === 0) {
       score += 3.5;
       matchedFeatures.push("Year exact (+3.5)");
@@ -172,17 +175,16 @@ function scoreCandidate(burial, candidate, sexCounts, totalNamed, familyPrior = 
     }
   }
 
-  const banc = safeStr(burial.ancestry).toLowerCase();
-  const canc = safeStr(candidate.ancestry).toLowerCase();
-  const ancUnknown = ["unknown", "indeterminate", ""];
-
-  if (banc && !ancUnknown.includes(banc) && canc && !ancUnknown.includes(canc)) {
-    if (banc === canc || banc.includes(canc) || canc.includes(banc)) {
-      score += 1.2;
-      matchedFeatures.push("Ancestry (+1.2)");
-    } else {
-      score -= 0.5;
-      unmatchedFeatures.push("Ancestry mismatch");
+  const burialAnc = safeStr(burial.ancestry).toLowerCase();
+  const candidateRace = safeStr(candidate.ancestry).toLowerCase();
+  if (burialAnc && candidateRace) {
+    // Notebook logic: only award positive ancestry consistency (no penalty branch).
+    if (burialAnc.includes("european") && !candidateRace.includes("af")) {
+      score += 0.5;
+      matchedFeatures.push("Ancestry consistent (+0.5)");
+    } else if (burialAnc.includes("african") && candidateRace.includes("af")) {
+      score += 1.5;
+      matchedFeatures.push("Ancestry: African match (+1.5)");
     }
   }
 
@@ -192,16 +194,16 @@ function scoreCandidate(burial, candidate, sexCounts, totalNamed, familyPrior = 
     const lastKey = normalizeName(last);
 
     const priorBoost =
-      (familyPrior[fullKey] || 0) * 0.8 + (familyPrior[lastKey] || 0) * 0.4;
+      (familyPrior[fullKey] || 0) * 1.2 + (familyPrior[lastKey] || 0) * 0.6;
 
     if (priorBoost > 0) {
-      const boost = Math.min(2.0, priorBoost);
-      score += boost;
-      matchedFeatures.push(`Family cluster prior (+${boost.toFixed(1)})`);
+      score += priorBoost;
+      familyPriorBoost = priorBoost;
+      matchedFeatures.push(`Family cluster prior (+${priorBoost.toFixed(1)})`);
     }
   }
 
-  return { score, matchedFeatures, unmatchedFeatures };
+  return { score, matchedFeatures, unmatchedFeatures, yearDiff, familyPriorBoost };
 }
 
 // ─── run_matcher (Cell 75) ───────────────────────────────────────────────────
@@ -210,38 +212,39 @@ function runMatcher(burial, candidates, topN = 10, familyPrior = null) {
   const sexCounts = buildSexCounts(candidates);
   const totalNamed = candidates.length;
 
-  const scored = candidates.map((candidate) => {
-    const { score, matchedFeatures, unmatchedFeatures } = scoreCandidate(
+  const scored = candidates.map((candidate, idx) => {
+    const { score, matchedFeatures, unmatchedFeatures, yearDiff, familyPriorBoost } = scoreCandidate(
       burial,
       candidate,
       sexCounts,
       totalNamed,
       familyPrior
     );
-    return { candidate, score, matchedFeatures, unmatchedFeatures };
+    return { candidate, score, matchedFeatures, unmatchedFeatures, yearDiff, familyPriorBoost, idx };
   });
 
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const aYear = a.yearDiff ?? Number.POSITIVE_INFINITY;
+    const bYear = b.yearDiff ?? Number.POSITIVE_INFINITY;
+    if (aYear !== bYear) return aYear - bYear;
+    if (b.familyPriorBoost !== a.familyPriorBoost) return b.familyPriorBoost - a.familyPriorBoost;
+    return a.idx - b.idx;
+  });
   const top = scored.slice(0, topN);
-
-  const maxScore = top[0]?.score ?? 1;
-  const minScore = Math.min(0, top[top.length - 1]?.score ?? 0);
-  const range = maxScore - minScore || 1;
+  const maxPossible = 12.0;
+  const bestRawScore = top[0]?.score ?? 0;
 
   return top
     .map(({ candidate, score, matchedFeatures, unmatchedFeatures }) => {
-      const normalized = Math.round(((score - minScore) / range) * 100);
+      // Notebook-aligned Bayesian confidence scaling (absolute).
+      const bayesianScore = Number(Math.min(99, Math.max(0, (score / maxPossible) * 100)).toFixed(1));
+      // Display score scaled to full 0-100 within this burial's candidate set.
+      const scaledScore =
+        bestRawScore > 0 ? Number(Math.max(0, (score / bestRawScore) * 100).toFixed(1)) : 0;
       const familyPriorUsed = matchedFeatures.some((f) =>
         f.toLowerCase().includes("family cluster prior")
       );
-      const dbscanBoost = familyPriorUsed ? 10 : 0;
-      const confidenceScore = Math.min(100, normalized + dbscanBoost);
-
-      let confidence;
-      if (confidenceScore >= 80) confidence = "High";
-      else if (confidenceScore >= 55) confidence = "Moderate";
-      else if (confidenceScore >= 30) confidence = "Low";
-      else return null;
 
       const topMatches = matchedFeatures
         .slice(0, 3)
@@ -257,15 +260,15 @@ function runMatcher(burial, candidates, topN = 10, familyPrior = null) {
       return {
         person: candidate,
         rawScore: score,
-        score: normalized,
-        confidenceScore,
-        confidence,
+        score: scaledScore,
+        confidenceScore: bayesianScore,
+        confidence: "Bayesian",
         explanation,
         matchedFeatures,
         unmatchedFeatures,
         comparableFields: matchedFeatures.length + unmatchedFeatures.length,
         familyPriorUsed,
-        method: "bayesian+dbscan",
+        method: "bayesian",
       };
     })
     .filter(Boolean);

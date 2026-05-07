@@ -4,9 +4,7 @@ import { namedPersonsData, NAMED_COUNT } from "../namedPersonsData";
 import "./ConfidencePanel.css";
 
 const CONFIDENCE_COLORS = {
-  High: "#c9940a",
-  Moderate: "#a89870",
-  Low: "#5a5040",
+  Bayesian: "#c9940a",
 };
 
 function toInitials(name) {
@@ -19,7 +17,6 @@ function toInitials(name) {
 
 function MatchCard({ burial, match }) {
   const color = CONFIDENCE_COLORS[match.confidence] || "var(--text-dim)";
-  const badgeClass = (match.confidence || "").toLowerCase();
   const hasDateOfDeath = Boolean((match.person.dateOfDeath || "").trim());
 
   const handleCopy = async () => {
@@ -54,7 +51,7 @@ function MatchCard({ burial, match }) {
           )}
         </div>
         <div className="confidence-card-actions">
-          <span className={`confidence-badge ${badgeClass}`}>{match.confidence}</span>
+          <span className="confidence-badge">{match.confidence}</span>
           <button className="confidence-copy-btn" onClick={handleCopy} type="button">
             Copy
           </button>
@@ -102,7 +99,7 @@ function ComparisonTable({ burial, matches }) {
       label: "Confidence",
       key: "confidence",
       burial: "—",
-      render: (m) => <span className={`ct-badge ${(m.confidence || "").toLowerCase()}`}>{m.confidence}</span>,
+      render: (m) => <span className="ct-badge">{m.confidence}</span>,
     },
     {
       label: "Score",
@@ -259,7 +256,7 @@ function ComparisonTable({ burial, matches }) {
                 <th key={`${m.person.nameId}-${i}`} className="ct-th ct-candidate-col">
                   <div className="ct-col-header">
                     <span className="ct-col-name">{m.person.nameId}</span>
-                    <span className={`ct-col-badge ${(m.confidence || "").toLowerCase()}`}>{m.confidence}</span>
+                    <span className="ct-col-badge">{m.confidence}</span>
                     <span className="ct-col-score">{m.score}/100</span>
                   </div>
                 </th>
@@ -312,7 +309,6 @@ export default function ConfidencePanel({
   topN = null,
   showComparisonTable = false,
 }) {
-  const [confidenceFilter, setConfidenceFilter] = useState("All");
   const [sortMode, setSortMode] = useState("score");
   const [viewMode, setViewMode] = useState("cards");
   const [comparePopupOpen, setComparePopupOpen] = useState(false);
@@ -364,19 +360,8 @@ export default function ConfidencePanel({
     return missing;
   }, [burial]);
 
-  const countsByConfidence = useMemo(() => {
-    const count = { All: displayMatches.length, High: 0, Moderate: 0, Low: 0 };
-    displayMatches.forEach((m) => {
-      count[m.confidence] += 1;
-    });
-    return count;
-  }, [displayMatches]);
-
   const displayedMatches = useMemo(() => {
-    const filtered =
-      confidenceFilter === "All"
-        ? [...displayMatches]
-        : displayMatches.filter((m) => m.confidence === confidenceFilter);
+    const filtered = [...displayMatches];
 
     if (sortMode === "name") {
       filtered.sort((a, b) =>
@@ -387,34 +372,7 @@ export default function ConfidencePanel({
     }
 
     return filtered;
-  }, [displayMatches, confidenceFilter, sortMode]);
-
-  const bandedItems = useMemo(() => {
-    const grouped = {};
-    displayedMatches.forEach((m) => {
-      const band = Math.round(m.score / 5) * 5;
-      if (!grouped[band]) grouped[band] = [];
-      grouped[band].push(m);
-    });
-    const bands = Object.keys(grouped)
-      .map(Number)
-      .sort((a, b) => b - a);
-    const items = [];
-    bands.forEach((band) => {
-      const arr = grouped[band];
-      if (arr.length >= 2) {
-        items.push({ kind: "header", band, count: arr.length });
-      }
-      arr.forEach((match, i) => {
-        items.push({
-          kind: "card",
-          match,
-          key: `${match.person.nameId}-${band}-${i}`,
-        });
-      });
-    });
-    return items;
-  }, [displayedMatches]);
+  }, [displayMatches, sortMode]);
 
   if (!burial) {
     return (
@@ -440,19 +398,6 @@ export default function ConfidencePanel({
       </div>
 
       <div className="confidence-controls">
-        <div className="confidence-filter-row">
-          {["All", "High", "Moderate", "Low"].map((level) => (
-            <button
-              key={level}
-              className={`confidence-filter-btn${confidenceFilter === level ? " active" : ""}`}
-              onClick={() => setConfidenceFilter(level)}
-              type="button"
-            >
-              {level}
-              <span className="confidence-filter-count">{countsByConfidence[level] ?? 0}</span>
-            </button>
-          ))}
-        </div>
         <button
           className="confidence-sort-toggle"
           onClick={() => setSortMode((prev) => (prev === "score" ? "name" : "score"))}
@@ -502,19 +447,13 @@ export default function ConfidencePanel({
         ) : viewMode === "table" ? (
           <div className="compare-inline-note">Compare is open in popup view.</div>
         ) : (
-          bandedItems.map((item) =>
-            item.kind === "header" ? (
-              <div key={`band-h-${item.band}`} className="score-band-header">
-                Score ~{item.band}/100 · {item.count} individuals
-              </div>
-            ) : (
-              <MatchCard
-                burial={burial}
-                key={item.key}
-                match={item.match}
-              />
-            )
-          )
+          displayedMatches.map((match, i) => (
+            <MatchCard
+              burial={burial}
+              key={`${match.person.nameId}-${i}`}
+              match={match}
+            />
+          ))
         )}
       </div>
 
