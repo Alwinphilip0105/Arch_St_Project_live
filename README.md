@@ -5,7 +5,7 @@ for the Arch Street burial site, Philadelphia PA
 (18th–19th century, 324 burials excavated).
 
 ## Live Site
-https://arch-street-burials.netlify.app
+[https://arch-street-burials.netlify.app](https://arch-st-project.netlify.app/)
 
 ## Features
 - 3D scatter plot (Three.js) — burials positioned by real coordinates
