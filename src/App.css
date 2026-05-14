@@ -2354,6 +2354,11 @@ html, body, #root {
   padding: 16px 14px 10px;
 }
 
+/* Recharts clips external pie labels by default */
+.charts-layout .chart-card .recharts-wrapper {
+  overflow: visible;
+}
+
 .chart-card.wide {
   grid-column: span 2;
 }

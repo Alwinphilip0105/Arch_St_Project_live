@@ -125,6 +125,15 @@ const CLUSTER_CHART_TOOLTIP_PROPS = {
   itemStyle: { color: 'var(--text)' },
 };
 
+/** External pie labels need margin + room; long names shortened on-chart only (tooltip keeps full `name`). */
+const PIE_CHART_MARGIN = { top: 6, right: 32, bottom: 6, left: 32 };
+
+function pieSliceLabel(name, percent) {
+  const pct = (percent * 100).toFixed(0);
+  const short = name === "Indeterminate" ? "Indet." : name;
+  return `${short} ${pct}%`;
+}
+
 // ─── Stats computations ───────────────────────────────────────────────────────
 function computeStats(data) {
   const count = (key) => data.reduce((acc, d) => {
@@ -1750,10 +1759,10 @@ export default function App() {
             <div className="chart-card">
               <h3 className="chart-title">Sex Distribution</h3>
               <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
+                <PieChart margin={PIE_CHART_MARGIN}>
                   <Pie data={sexData} dataKey="value" nameKey="name"
-                    cx="50%" cy="50%" outerRadius={80} label={({name, percent}) =>
-                      `${name} ${(percent*100).toFixed(0)}%`} labelLine={false}>
+                    cx="50%" cy="50%" outerRadius={64}
+                    label={({ name, percent }) => pieSliceLabel(name, percent)} labelLine={false}>
                     {sexData.map((e, i) => <Cell key={i} fill={e.fill} />)}
                   </Pie>
                   <Tooltip
@@ -1782,10 +1791,10 @@ export default function App() {
             <div className="chart-card">
               <h3 className="chart-title">Preservation State</h3>
               <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
+                <PieChart margin={PIE_CHART_MARGIN}>
                   <Pie data={presData} dataKey="value" nameKey="name"
-                    cx="50%" cy="50%" innerRadius={50} outerRadius={85}
-                    label={({name, percent}) => `${name} ${(percent*100).toFixed(0)}%`} labelLine={false}>
+                    cx="50%" cy="50%" innerRadius={44} outerRadius={70}
+                    label={({ name, percent }) => pieSliceLabel(name, percent)} labelLine={false}>
                     {presData.map((e, i) => <Cell key={i} fill={e.fill} />)}
                   </Pie>
                   <Tooltip {...ANALYTICS_TOOLTIP_PROPS} />
