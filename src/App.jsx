@@ -104,6 +104,27 @@ const EMPTY_FILTERS = {
   materialType: new Set(),
 };
 
+/** Recharts default tooltip ignores contentStyle.color for item rows — set label + item explicitly. */
+const ANALYTICS_TOOLTIP_PROPS = {
+  contentStyle: {
+    background: '#1a1610',
+    border: '1px solid #3a3020',
+    borderRadius: 6,
+  },
+  labelStyle: { color: '#f5efd9', fontWeight: 600 },
+  itemStyle: { color: '#f5efd9' },
+};
+
+const CLUSTER_CHART_TOOLTIP_PROPS = {
+  contentStyle: {
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+  },
+  labelStyle: { color: 'var(--text)', fontWeight: 600 },
+  itemStyle: { color: 'var(--text)' },
+};
+
 // ─── Stats computations ───────────────────────────────────────────────────────
 function computeStats(data) {
   const count = (key) => data.reduce((acc, d) => {
@@ -1735,7 +1756,10 @@ export default function App() {
                       `${name} ${(percent*100).toFixed(0)}%`} labelLine={false}>
                     {sexData.map((e, i) => <Cell key={i} fill={e.fill} />)}
                   </Pie>
-                  <Tooltip formatter={(v) => [v, 'Count']} contentStyle={{ background: '#1a1610', border: '1px solid #3a3020', color: '#e8d9b0' }} />
+                  <Tooltip
+                    formatter={(v) => [v, 'Count']}
+                    {...ANALYTICS_TOOLTIP_PROPS}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -1747,7 +1771,7 @@ export default function App() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2418" />
                   <XAxis dataKey="name" tick={{ fill: '#a89870', fontSize: 11 }} angle={-35} textAnchor="end" />
                   <YAxis tick={{ fill: '#a89870', fontSize: 11 }} />
-                  <Tooltip contentStyle={{ background: '#1a1610', border: '1px solid #3a3020', color: '#e8d9b0' }} />
+                  <Tooltip {...ANALYTICS_TOOLTIP_PROPS} />
                   <Bar dataKey="value" name="Count" radius={[3, 3, 0, 0]}>
                     {ageData.map((e, i) => <Cell key={i} fill={e.fill} />)}
                   </Bar>
@@ -1764,7 +1788,7 @@ export default function App() {
                     label={({name, percent}) => `${name} ${(percent*100).toFixed(0)}%`} labelLine={false}>
                     {presData.map((e, i) => <Cell key={i} fill={e.fill} />)}
                   </Pie>
-                  <Tooltip contentStyle={{ background: '#1a1610', border: '1px solid #3a3020', color: '#e8d9b0' }} />
+                  <Tooltip {...ANALYTICS_TOOLTIP_PROPS} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -1776,7 +1800,7 @@ export default function App() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2418" />
                   <XAxis type="number" tick={{ fill: '#a89870', fontSize: 11 }} />
                   <YAxis dataKey="name" type="category" tick={{ fill: '#a89870', fontSize: 11 }} width={75} />
-                  <Tooltip contentStyle={{ background: '#1a1610', border: '1px solid #3a3020', color: '#e8d9b0' }} />
+                  <Tooltip {...ANALYTICS_TOOLTIP_PROPS} />
                   <Bar dataKey="value" name="Count" radius={[0, 3, 3, 0]}>
                     {ancData.map((e, i) => <Cell key={i} fill={e.fill} />)}
                   </Bar>
@@ -1791,7 +1815,7 @@ export default function App() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2418" />
                   <XAxis dataKey="depth" tick={{ fill: '#a89870', fontSize: 10 }} angle={-35} textAnchor="end" />
                   <YAxis tick={{ fill: '#a89870', fontSize: 11 }} />
-                  <Tooltip contentStyle={{ background: '#1a1610', border: '1px solid #3a3020', color: '#e8d9b0' }} />
+                  <Tooltip {...ANALYTICS_TOOLTIP_PROPS} />
                   <Bar dataKey="count" name="Burials" fill="#c97b3a" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -1815,13 +1839,7 @@ export default function App() {
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="name" tick={{ fill: 'var(--text-sub)', fontSize: 11 }} angle={-35} textAnchor="end" />
                   <YAxis tick={{ fill: 'var(--text-sub)', fontSize: 11 }} />
-                  <Tooltip
-                    contentStyle={{
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border)',
-                      color: 'var(--text)',
-                    }}
-                  />
+                  <Tooltip {...CLUSTER_CHART_TOOLTIP_PROPS} />
                   <Bar dataKey="count" name="Burials" fill="var(--gold)" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
