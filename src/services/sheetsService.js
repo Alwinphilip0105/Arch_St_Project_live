@@ -90,6 +90,10 @@ const COLUMN_MAP = {
   'Name ID': 'nameId', 'Name Id': 'nameId', 'NameID': 'nameId',
   'Date Of Death': 'dateOfDeath', 'Date of Death': 'dateOfDeath',
   'Date of death': 'dateOfDeath',
+
+  // Optional: cause-of-death (notebook Step 4 cause match); map sheet column names here
+  'Cause of Death': 'cause', 'Cause of death': 'cause',
+  'Pathology': 'cause', 'Cause': 'cause',
 };
 
 export function normalizeSheetRecord(row) {

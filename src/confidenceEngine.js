@@ -1,7 +1,14 @@
 /**
- * Bayesian identity matching (ported from RUC AI Campus Team 2 notebook, cells 69–77).
+ * Bayesian identity matching — ported from Team 2 notebook
+ * `AICampus_Social_Project (2).ipynb`: Step 3 `age_range_to_years` / `parse_master_year`,
+ * Step 4 `sex_weight`, `cause_rarity_weight`, `score_candidate`, `run_matcher`.
+ *
  * Complements spatial DBSCAN in `utils/dbscan.js` (family cluster priors).
+ * Feature constants: `config/bayesianWeights.js`.
  */
+
+import { BAYESIAN_WEIGHTS as W } from "./config/bayesianWeights";
+import { namedPersons as confirmedRemainsCatalog } from "./namedPersons";
 
 // ─── Helpers (Cell 69) ───────────────────────────────────────────────────────
 
@@ -49,7 +56,7 @@ export function nameMatchesExpected(expectedName, predName) {
   return false;
 }
 
-// ─── Year (Cell 73) ──────────────────────────────────────────────────────────
+// ─── Year (notebook: parse_master_year) ───────────────────────────────────────
 
 export function parseBurialYear(dateOfDeath) {
   if (!dateOfDeath) return null;
@@ -60,17 +67,18 @@ export function parseBurialYear(dateOfDeath) {
   return null;
 }
 
-// ─── Age ranges (Cell 73) ───────────────────────────────────────────────────
+// ─── Age ranges (notebook Step 3: age_range_to_years + Subadult fix) ─────────
 
-const AGE_CATEGORY_MAP = {
-  Infant: [0, 2],
-  Child: [3, 11],
-  Adolescent: [12, 19],
-  "Young Adult": [18, 35],
-  "Middle Adult": [35, 50],
-  "Old Adult": [50, 99],
-  Adult: [18, 99],
-};
+const AGE_CATEGORY_ORDER = [
+  ["Young Adult", [18, 35]],
+  ["Middle Adult", [35, 50]],
+  ["Old Adult", [50, 99]],
+  ["Subadult", [3, 19]],
+  ["Infant", [0, 2]],
+  ["Child", [3, 11]],
+  ["Adolescent", [12, 19]],
+  ["Adult", [18, 99]],
+];
 
 export function parseAgeRange(ageRange, ageCategory) {
   if (ageRange && ageRange.trim()) {
@@ -80,8 +88,9 @@ export function parseAgeRange(ageRange, ageCategory) {
     if (m2) return [parseInt(m2[1], 10), 99];
   }
   if (ageCategory) {
-    for (const [cat, bounds] of Object.entries(AGE_CATEGORY_MAP)) {
-      if (ageCategory.toLowerCase().includes(cat.toLowerCase())) {
+    const ac = ageCategory.toLowerCase();
+    for (const [cat, bounds] of AGE_CATEGORY_ORDER) {
+      if (ac.includes(cat.toLowerCase())) {
         return bounds;
       }
     }
@@ -89,7 +98,15 @@ export function parseAgeRange(ageRange, ageCategory) {
   return [null, null];
 }
 
-// ─── Sex rarity weights (Cell 74) ────────────────────────────────────────────
+function candidateCauseRaw(person) {
+  return person.causeClean ?? person.cause ?? person.causeOfDeath ?? person.causeofdeath ?? "";
+}
+
+function burialCauseRaw(burial) {
+  return burial.cause ?? burial.causeClean ?? burial.causeOfDeath ?? "";
+}
+
+// ─── Sex counts / weights (notebook Cell 74) ───────────────────────────────────
 
 function buildSexCounts(candidates) {
   const counts = { Male: 0, Female: 0, Unknown: 0 };
@@ -104,7 +121,7 @@ function buildSexCounts(candidates) {
 
 function sexWeight(sexVal, sexCounts, totalNamed) {
   const s = safeStr(sexVal).toLowerCase();
-  if (!s || ["unknown", "n/a", ""].includes(s)) return 0;
+  if (!s || ["unknown", "n/a", "", "nan"].includes(s)) return 0;
   const key = s.startsWith("m") ? "Male" : s.startsWith("f") ? "Female" : null;
   if (!key) return 0;
   const count = sexCounts[key] || 1;
@@ -112,9 +129,43 @@ function sexWeight(sexVal, sexCounts, totalNamed) {
   return Math.max(1.0, Math.log(denom / count));
 }
 
-// ─── score_candidate (Cell 74) ───────────────────────────────────────────────
+// ─── Cause rarity (notebook Cell 74: cause_rarity_weight) ───────────────────
 
-function scoreCandidate(burial, candidate, sexCounts, totalNamed, familyPrior = null) {
+function normalizeCauseLookupKey(causeStr) {
+  const c = safeStr(causeStr).toLowerCase().trim();
+  if (!c || c === "nan") return "";
+  return c;
+}
+
+function buildCauseCounts(candidates) {
+  const counts = {};
+  for (const p of candidates) {
+    const key = normalizeCauseLookupKey(candidateCauseRaw(p));
+    if (!key) continue;
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return counts;
+}
+
+function causeRarityWeight(causeStr, totalNamed, causeCounts) {
+  const c = normalizeCauseLookupKey(causeStr);
+  if (!c) return 0;
+  const count = causeCounts[c] ?? 1;
+  const denom = Math.max(totalNamed || 0, 1);
+  const rarity = Math.log(denom / count);
+  return Math.min(W.causeWeightMax, Math.max(W.causeWeightMin, rarity));
+}
+
+// ─── score_candidate (notebook Cell 74) ──────────────────────────────────────
+
+function scoreCandidate(
+  burial,
+  candidate,
+  sexCounts,
+  totalNamed,
+  causeCounts,
+  familyPrior = null
+) {
   let score = 0.0;
   const matchedFeatures = [];
   const unmatchedFeatures = [];
@@ -123,7 +174,7 @@ function scoreCandidate(burial, candidate, sexCounts, totalNamed, familyPrior = 
 
   const bsex = safeStr(burial.sex).toLowerCase();
   const csex = safeStr(candidate.sex).toLowerCase();
-  const sexUnknown = ["unknown", "n/a", ""];
+  const sexUnknown = ["unknown", "n/a", "", "nan"];
 
   if (bsex && !sexUnknown.includes(bsex) && csex && !sexUnknown.includes(csex)) {
     if (bsex[0] === csex[0]) {
@@ -131,12 +182,12 @@ function scoreCandidate(burial, candidate, sexCounts, totalNamed, familyPrior = 
       score += w;
       matchedFeatures.push(`Sex (${w.toFixed(1)})`);
     } else {
-      score -= 1.5;
+      score += W.sexMismatch;
       unmatchedFeatures.push("Sex");
     }
   }
 
-  const burialYear = parseBurialYear(burial.dateOfDeath);
+  const burialYear = burial.deathYear != null ? safeInt(burial.deathYear) : parseBurialYear(burial.dateOfDeath);
   const candidateYear = candidate.yearOfDeath
     ? safeInt(candidate.yearOfDeath)
     : parseBurialYear(candidate.dateOfDeath);
@@ -145,46 +196,64 @@ function scoreCandidate(burial, candidate, sexCounts, totalNamed, familyPrior = 
     const diff = Math.abs(burialYear - candidateYear);
     yearDiff = diff;
     if (diff === 0) {
-      score += 3.5;
-      matchedFeatures.push("Year exact (+3.5)");
+      score += W.yearExact;
+      matchedFeatures.push(`Year exact (${W.yearExact})`);
     } else if (diff <= 3) {
-      score += 2.0;
-      matchedFeatures.push(`Year ±${diff} (+2.0)`);
+      score += W.yearWithin3;
+      matchedFeatures.push(`Year ±${diff} (${W.yearWithin3})`);
     } else if (diff <= 8) {
-      score += 0.8;
-      matchedFeatures.push(`Year ±${diff} (+0.8)`);
+      score += W.yearWithin8;
+      matchedFeatures.push(`Year ±${diff} (${W.yearWithin8})`);
     } else {
-      score -= 1.0;
+      score += W.yearFarPenalty;
       unmatchedFeatures.push(`Year off by ${diff}`);
     }
   }
 
-  const [ageLo, ageHi] = parseAgeRange(burial.ageRange, burial.ageCat || burial.age);
+  const ageLo = burial.ageLo != null ? Number(burial.ageLo) : null;
+  const ageHi = burial.ageHi != null ? Number(burial.ageHi) : null;
+  const [parsedLo, parsedHi] =
+    ageLo != null && ageHi != null && !Number.isNaN(ageLo) && !Number.isNaN(ageHi)
+      ? [ageLo, ageHi]
+      : parseAgeRange(burial.ageRange, burial.ageCat || burial.age);
   const candAge = candidate.ageAtDeath != null ? parseFloat(candidate.ageAtDeath) : null;
 
-  if (ageLo !== null && ageHi !== null && candAge !== null && !Number.isNaN(candAge)) {
-    if (ageLo <= candAge && candAge <= ageHi) {
-      score += 1.8;
-      matchedFeatures.push(`Age fits (${candAge} in ${ageLo}-${ageHi}) (+1.8)`);
-    } else if (Math.abs(candAge - ageLo) <= 5 || Math.abs(candAge - ageHi) <= 5) {
-      score += 0.5;
-      matchedFeatures.push("Age close (+0.5)");
+  if (parsedLo !== null && parsedHi !== null && candAge !== null && !Number.isNaN(candAge)) {
+    if (parsedLo <= candAge && candAge <= parsedHi) {
+      score += W.ageFits;
+      matchedFeatures.push(
+        `Age fits (${candAge} in ${parsedLo}-${parsedHi}) (${W.ageFits})`
+      );
+    } else if (Math.abs(candAge - parsedLo) <= 5 || Math.abs(candAge - parsedHi) <= 5) {
+      score += W.ageClose;
+      matchedFeatures.push(`Age close (${W.ageClose})`);
     } else {
-      score -= 0.8;
-      unmatchedFeatures.push(`Age ${candAge} outside ${ageLo}-${ageHi}`);
+      score += W.ageMiss;
+      unmatchedFeatures.push(`Age ${candAge} outside ${parsedLo}-${parsedHi}`);
+    }
+  }
+
+  const burialCause = safeStr(burialCauseRaw(burial)).toLowerCase();
+  const candidateCause = safeStr(candidateCauseRaw(candidate)).toLowerCase();
+  if (burialCause && candidateCause) {
+    if (burialCause.includes(candidateCause) || candidateCause.includes(burialCause)) {
+      const cw = causeRarityWeight(candidateCause, totalNamed, causeCounts);
+      if (cw > 0) {
+        score += cw;
+        matchedFeatures.push(`Cause: ${candidateCause} (${cw.toFixed(1)})`);
+      }
     }
   }
 
   const burialAnc = safeStr(burial.ancestry).toLowerCase();
   const candidateRace = safeStr(candidate.ancestry).toLowerCase();
   if (burialAnc && candidateRace) {
-    // Notebook logic: only award positive ancestry consistency (no penalty branch).
     if (burialAnc.includes("european") && !candidateRace.includes("af")) {
-      score += 0.5;
-      matchedFeatures.push("Ancestry consistent (+0.5)");
+      score += W.ancestryEuropean;
+      matchedFeatures.push(`Ancestry consistent (${W.ancestryEuropean})`);
     } else if (burialAnc.includes("african") && candidateRace.includes("af")) {
-      score += 1.5;
-      matchedFeatures.push("Ancestry: African match (+1.5)");
+      score += W.ancestryAfrican;
+      matchedFeatures.push(`Ancestry: African match (${W.ancestryAfrican})`);
     }
   }
 
@@ -194,22 +263,24 @@ function scoreCandidate(burial, candidate, sexCounts, totalNamed, familyPrior = 
     const lastKey = normalizeName(last);
 
     const priorBoost =
-      (familyPrior[fullKey] || 0) * 1.2 + (familyPrior[lastKey] || 0) * 0.6;
+      (familyPrior[fullKey] || 0) * W.familyPriorFullNameMult +
+      (familyPrior[lastKey] || 0) * W.familyPriorSurnameMult;
 
     if (priorBoost > 0) {
       score += priorBoost;
       familyPriorBoost = priorBoost;
-      matchedFeatures.push(`Family cluster prior (+${priorBoost.toFixed(1)})`);
+      matchedFeatures.push(`Family cluster boost (${priorBoost.toFixed(1)})`);
     }
   }
 
   return { score, matchedFeatures, unmatchedFeatures, yearDiff, familyPriorBoost };
 }
 
-// ─── run_matcher (Cell 75) ───────────────────────────────────────────────────
+// ─── run_matcher (notebook Cell 74) ──────────────────────────────────────────
 
 function runMatcher(burial, candidates, topN = 10, familyPrior = null) {
   const sexCounts = buildSexCounts(candidates);
+  const causeCounts = buildCauseCounts(candidates);
   const totalNamed = candidates.length;
 
   const scored = candidates.map((candidate, idx) => {
@@ -218,6 +289,7 @@ function runMatcher(burial, candidates, topN = 10, familyPrior = null) {
       candidate,
       sexCounts,
       totalNamed,
+      causeCounts,
       familyPrior
     );
     return { candidate, score, matchedFeatures, unmatchedFeatures, yearDiff, familyPriorBoost, idx };
@@ -232,19 +304,15 @@ function runMatcher(burial, candidates, topN = 10, familyPrior = null) {
     return a.idx - b.idx;
   });
   const top = scored.slice(0, topN);
-  const maxPossible = 12.0;
-  const bestRawScore = top[0]?.score ?? 0;
+  const maxPossible = W.scoreScaleMax > 0 ? W.scoreScaleMax : 12.0;
 
   return top
     .map(({ candidate, score, matchedFeatures, unmatchedFeatures }) => {
-      // Notebook-aligned Bayesian confidence scaling (absolute).
-      const bayesianScore = Number(Math.min(99, Math.max(0, (score / maxPossible) * 100)).toFixed(1));
-      // Display score scaled to full 0-100 within this burial's candidate set.
-      const scaledScore =
-        bestRawScore > 0 ? Number(Math.max(0, (score / bestRawScore) * 100).toFixed(1)) : 0;
-      const familyPriorUsed = matchedFeatures.some((f) =>
-        f.toLowerCase().includes("family cluster prior")
-      );
+      const modelFitScore = Number(Math.min(99, Math.max(0, (score / maxPossible) * 100)).toFixed(1));
+      const familyPriorUsed = matchedFeatures.some((f) => {
+        const s = f.toLowerCase();
+        return s.includes("family cluster boost") || s.includes("family cluster prior");
+      });
 
       const topMatches = matchedFeatures
         .slice(0, 3)
@@ -260,8 +328,8 @@ function runMatcher(burial, candidates, topN = 10, familyPrior = null) {
       return {
         person: candidate,
         rawScore: score,
-        score: scaledScore,
-        confidenceScore: bayesianScore,
+        score: modelFitScore,
+        confidenceScore: modelFitScore,
         confidence: "Bayesian",
         explanation,
         matchedFeatures,
@@ -275,6 +343,101 @@ function runMatcher(burial, candidates, topN = 10, familyPrior = null) {
 }
 
 /**
+ * Documented 100% confirmed remains: `namedPersons.js` (NamedBurials / team list).
+ * Placename-style rows like "Unknown Individual (G-131)" do not reserve a register name.
+ */
+function isCatalogClaimName(nameId) {
+  const n = safeStr(nameId).toLowerCase();
+  if (!n) return false;
+  return !n.startsWith("unknown individual");
+}
+
+/**
+ * @returns {Map<string, string>} normalized register name → G-number (confirmed list only)
+ */
+export function buildConfirmedRemainsClaimMap() {
+  const map = new Map();
+  for (const row of confirmedRemainsCatalog) {
+    if (!isCatalogClaimName(row.nameId)) continue;
+    const key = normalizeName(row.nameId);
+    if (!key) continue;
+    map.set(key, row.gNumber);
+  }
+  return map;
+}
+
+function findConfirmedCatalogRow(burial) {
+  const g = safeStr(burial?.g);
+  const nid = safeStr(burial?.nameId);
+  if (!g || !nid) return null;
+  for (const row of confirmedRemainsCatalog) {
+    if (row.gNumber !== g) continue;
+    if (normalizeName(row.nameId) === normalizeName(nid)) return row;
+    if (nameMatchesExpected(row.nameId, nid) || nameMatchesExpected(nid, row.nameId)) return row;
+  }
+  return null;
+}
+
+function filterNamedPersonsForBurial(namedPersons, burialG, claimMap) {
+  if (!claimMap || claimMap.size === 0) return namedPersons;
+  return namedPersons.filter((p) => {
+    const key = normalizeName(p.nameId || "");
+    if (!key) return true;
+    const ownerG = claimMap.get(key);
+    if (!ownerG) return true;
+    return ownerG === burialG;
+  });
+}
+
+function findNamedPersonForNameId(nameId, namedPersonsFull) {
+  const target = normalizeName(nameId);
+  if (!target) return null;
+  for (const p of namedPersonsFull) {
+    if (normalizeName(p.nameId || "") === target) return p;
+  }
+  for (const p of namedPersonsFull) {
+    if (nameMatchesExpected(nameId, p.nameId)) return p;
+  }
+  return null;
+}
+
+function stripSamePersonRows(ranked, person) {
+  const key = normalizeName(person.nameId || "");
+  if (!key) return ranked;
+  return ranked.filter((r) => normalizeName(r.person?.nameId || "") !== key);
+}
+
+/**
+ * When the master sheet already has Name ID set, treat that register individual as confirmed
+ * for this burial only: score 100 and remove duplicate rows for the same person.
+ * Only applies when this G-number + Name ID match the curated confirmed list (`namedPersons.js`).
+ */
+function applyConfirmedNameIdRow(burial, ranked, namedPersonsFull) {
+  const catalog = findConfirmedCatalogRow(burial);
+  if (!catalog) return ranked;
+  const person = findNamedPersonForNameId(catalog.nameId, namedPersonsFull);
+  if (!person) return ranked;
+
+  const rest = stripSamePersonRows(ranked, person);
+  const maxRaw = W.scoreScaleMax > 0 ? W.scoreScaleMax : 12;
+  const confirmedRow = {
+    person,
+    rawScore: maxRaw,
+    score: 100,
+    confidenceScore: 100,
+    confidence: "Confirmed",
+    explanation: "Documented confirmed named burial (team confirmed list).",
+    matchedFeatures: ["Confirmed assignment (Named Burials list)"],
+    unmatchedFeatures: [],
+    comparableFields: Math.max(6, ranked[0]?.comparableFields ?? 0),
+    familyPriorUsed: false,
+    method: "confirmed",
+    isConfirmedAssignment: true,
+  };
+  return [confirmedRow, ...rest];
+}
+
+/**
  * @param {object} unknown - burial row (may include clusterId from DBSCAN)
  * @param {Array} namedPersons - candidate named persons array
  * @param {Record<number|string, Record<string, number>>|null} clusterPriors - optional family surname priors by cluster id
@@ -283,6 +446,9 @@ export function scoreMatch(unknown, namedPersons, clusterPriors = null) {
   if (!unknown || !namedPersons?.length) return [];
 
   const familyPrior = clusterPriors ? clusterPriors[unknown.clusterId] || null : null;
+  const claimMap = buildConfirmedRemainsClaimMap();
+  const candidates = filterNamedPersonsForBurial(namedPersons, unknown.g, claimMap);
 
-  return runMatcher(unknown, namedPersons, 10, familyPrior);
+  const ranked = runMatcher(unknown, candidates, 10, familyPrior);
+  return applyConfirmedNameIdRow(unknown, ranked, namedPersons);
 }

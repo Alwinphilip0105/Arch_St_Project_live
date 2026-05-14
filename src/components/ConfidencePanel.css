@@ -385,6 +385,7 @@
 
 .ct-legend {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   font-size: 10px;
   color: var(--text-dim);
@@ -392,6 +393,11 @@
 }
 
 .ct-legend-item { display: flex; align-items: center; gap: 5px; }
+.ct-legend-note {
+  flex-basis: 100%;
+  font-style: italic;
+  opacity: 0.95;
+}
 .ct-match-dot,
 .ct-nomatch-dot {
   width: 8px;
@@ -665,6 +671,13 @@
   color: var(--text-sub);
   white-space: nowrap;
   font-weight: 600;
+}
+
+.score-fit-label {
+  font-weight: 500;
+  font-size: 10px;
+  opacity: 0.8;
+  margin-left: 6px;
 }
 
 .confidence-explanation {

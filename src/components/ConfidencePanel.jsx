@@ -5,7 +5,29 @@ import "./ConfidencePanel.css";
 
 const CONFIDENCE_COLORS = {
   Bayesian: "#c9940a",
+  Confirmed: "#2a9d8f",
 };
+
+/** Row highlight: sex bonus in scorer only, not unrelated "sex" substrings. */
+function matchedSexBonus(m) {
+  return m.matchedFeatures?.some((f) => (f || "").toLowerCase().startsWith("sex (")) ?? false;
+}
+
+/** Row highlight: numeric age band overlap only (not other strings containing "age"). */
+function matchedAgeBandBonus(m) {
+  return (
+    m.matchedFeatures?.some((f) => {
+      const s = (f || "").toLowerCase();
+      return s.startsWith("age fits") || s.startsWith("age close");
+    }) ?? false
+  );
+}
+
+function scoreBarTone(score) {
+  if (score >= 50) return "#c9940a";
+  if (score >= 30) return "#a89870";
+  return "#5a5040";
+}
 
 function toInitials(name) {
   return (name || "")
@@ -22,7 +44,9 @@ function MatchCard({ burial, match }) {
   const handleCopy = async () => {
     const shortName = toInitials(match.person.nameId || "Unknown");
     const contrib = match.matchedFeatures?.slice(0, 4).join("; ") || "—";
-    const summary = `${burial.g} → ${shortName} (${match.score}/100 ${match.confidence}, raw ${match.rawScore.toFixed(2)}) — ${contrib}`;
+    const summary = match.isConfirmedAssignment
+      ? `${burial.g} → ${shortName} (100/100 confirmed Name ID, raw ${match.rawScore.toFixed(2)}) — ${contrib}`
+      : `${burial.g} → ${shortName} (${match.score}/100 model fit, ${match.confidence}, raw ${match.rawScore.toFixed(2)}) — ${contrib}`;
 
     try {
       await navigator.clipboard.writeText(summary);
@@ -62,11 +86,14 @@ function MatchCard({ burial, match }) {
         <div className="confidence-progress-track">
           <div
             className="confidence-progress-fill"
-            style={{ width: `${match.score}%`, backgroundColor: color }}
+            style={{ width: `${Math.min(100, match.score)}%`, backgroundColor: color }}
           />
         </div>
         <div className="confidence-score score-fraction">
-          {match.score} / 100
+          {match.score} / 100{" "}
+          <span className="score-fit-label">
+            {match.isConfirmedAssignment ? "Name ID" : "model fit"}
+          </span>
           <span className="raw-score">raw: {match.rawScore.toFixed(2)}</span>
         </div>
       </div>
@@ -102,7 +129,7 @@ function ComparisonTable({ burial, matches }) {
       render: (m) => <span className="ct-badge">{m.confidence}</span>,
     },
     {
-      label: "Score",
+      label: "Model fit",
       key: "score",
       burial: "—",
       render: (m) => (
@@ -111,8 +138,9 @@ function ComparisonTable({ burial, matches }) {
             <div
               className="ct-score-fill"
               style={{
-                width: `${m.score}%`,
-                background: m.score >= 80 ? "#c9940a" : m.score >= 55 ? "#a89870" : "#5a5040",
+                width: `${Math.min(100, m.score)}%`,
+                background:
+                  m.confidence === "Confirmed" ? CONFIDENCE_COLORS.Confirmed : scoreBarTone(m.score),
               }}
             />
           </div>
@@ -138,7 +166,7 @@ function ComparisonTable({ burial, matches }) {
       render: (m, matched) => (
         <span className={matched ? "ct-match" : "ct-nomatch"}>{m.person.sex || "—"}</span>
       ),
-      isMatch: (m) => m.matchedFeatures?.some((f) => f.toLowerCase().includes("sex")),
+      isMatch: matchedSexBonus,
     },
     {
       label: "Age at Death",
@@ -149,7 +177,7 @@ function ComparisonTable({ burial, matches }) {
           {m.person.ageAtDeath ? `Age ${m.person.ageAtDeath}` : m.person.ageRange || m.person.age || "—"}
         </span>
       ),
-      isMatch: (m) => m.matchedFeatures?.some((f) => f.toLowerCase().includes("age")),
+      isMatch: matchedAgeBandBonus,
     },
     {
       label: "Ancestry",
@@ -257,7 +285,7 @@ function ComparisonTable({ burial, matches }) {
                   <div className="ct-col-header">
                     <span className="ct-col-name">{m.person.nameId}</span>
                     <span className="ct-col-badge">{m.confidence}</span>
-                    <span className="ct-col-score">{m.score}/100</span>
+                    <span className="ct-col-score">{m.score}/100 fit</span>
                   </div>
                 </th>
               ))}
@@ -289,6 +317,10 @@ function ComparisonTable({ burial, matches }) {
       </div>
 
       <div className="ct-legend">
+        <span className="ct-legend-item ct-legend-note">
+          Score is model fit vs nominal weights (not probability of identity). Register names on
+          the small confirmed-named list are excluded when already assigned to another G-number.
+        </span>
         <span className="ct-legend-item">
           <span className="ct-match-dot" />
           Match with burial data

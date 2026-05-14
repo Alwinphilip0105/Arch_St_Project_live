@@ -464,9 +464,9 @@ function CoffinIDMatches({ burial, clusteredData, clusterPriors }) {
               <div
                 className="ccv-score-fill"
                 style={{
-                  width: `${match.score}%`,
-                  background: match.score >= 80 ? '#c9940a'
-                    : match.score >= 55 ? '#a89870' : '#5a5040',
+                  width: `${Math.min(100, match.score)}%`,
+                  background: match.score >= 50 ? '#c9940a'
+                    : match.score >= 30 ? '#a89870' : '#5a5040',
                 }}
               />
             </div>
